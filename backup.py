@@ -13,6 +13,9 @@ import collections
 import traceback
 import pprint
 
+DEBUG = True
+VERBOSE = True
+
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
 # helper functions, for classifying directory entries
@@ -126,8 +129,59 @@ class DirEntryPerms( RootObj ):
    def __eq__( self, other ):
       return self.val == other.val
 
+def DEBUG_emit_compare_object( tag, obj ):
+      print "%s: %s/%s" %( tag, obj.ftype, obj.get_spec() )
+
+def DEBUG_emit_compare_banner( old, new ):
+
+   if DEBUG:
+      print """
+-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+DEBUG: COMPARING OBJECTS
+"""
+      DEBUG_emit_compare_object( "old", old )
+      DEBUG_emit_compare_object( "new", new )
+      print ""
 
 class DirEntry( RootObj ):
+
+   # these are interface functions used to initiate a comparison
+
+   @staticmethod
+   def compare_objects( old, new, check_name ):
+
+      DEBUG_emit_compare_banner( old, new )
+
+      if old.get_spec() == new.get_spec():
+         print "ERROR: comparing an object to itself"
+         sys.exit()
+
+      if old.isdir():
+         old.scan()
+
+      if new.isdir():
+         new.scan()
+
+      # at this point we know the ftypes are the same, so we can use either one
+      ftype = old.ftype
+      # get the class object associated with this file type
+      dentry_class = get_class( ftype )
+      # get the static comparison function
+      compare_fn = dentry_class.compare
+
+      # do the comparison and return the result
+      return compare_fn( old, new, check_name )
+
+   @staticmethod
+   def compare_entries( old_entry, new_entry, check_name = False ):
+
+      # use the factory to instantiate objects for each entry
+      old_obj = mk_entry( old_entry )
+      new_obj = mk_entry( new_entry )
+
+      DirEntry.compare_objects( old_obj, new_obj, check_name )
+
+   # these are helper functions used by the derived class to compare the objects
 
    @staticmethod
    def compare_field( old, new, field ):
@@ -144,15 +198,13 @@ class DirEntry( RootObj ):
       return is_equal
 
    @staticmethod
-   def compare( old, new, fields, check_name = False ):
+   def compare_fields( old, new, fields, check_name = False ):
 
       assert old.__class__ == new.__class__
       assert issubclass( old.__class__, DirEntry )
 
       if check_name:
          assert old.name == new.name
-
-      print "DEBUG: comparing %s: '%s' -> '%s'" % ( old.ftype, old.name, new.name )
 
       diff_obj = DiffEntry( old, new )
 
@@ -163,19 +215,25 @@ class DirEntry( RootObj ):
 
       return diff_obj
 
+
    def __init__( self, parent, name, ftype ):
 
       RootObj.__init__( self )
 
       self.parent       = parent
       self.name         = name
-
-      self.stat_info    = get_stat( self.get_spec() )
       self.ftype        = ftype
 
-      self.perm         = DirEntryPerms( self.stat_info )
+      self.stat_info    = get_stat( self.get_spec() )
 
-      # print "DEBUG: entry: %s" % self.__class__
+      self.perm         = DirEntryPerms( self.stat_info )
+      self.uid          = self.stat_info.st_uid
+      self.gid          = self.stat_info.st_gid
+      self.size         = self.stat_info.st_size
+
+      self.ctime        = self.stat_info.st_ctime  # meta-data changed (created?)
+      self.mtime        = self.stat_info.st_mtime  # modified
+      self.atime        = self.stat_info.st_atime  # accessed
 
    def isdir( self ):
       return False
@@ -190,21 +248,7 @@ class DirEntry( RootObj ):
 
 class FileObj( DirEntry ):
 
-   def __init__( self, parent, name ):
-      DirEntry.__init__( self, parent, name, IS_FILE )
-
-      # print "DEBUG: file: %s" % self.__class__
-
-class LinkObj( DirEntry ):
-
-   def __init__( self, parent, name ):
-      DirEntry.__init__( self, parent, name, IS_LINK )
-
-      # print "DEBUG: link: %s" % self.__class__
-
-      # TODO: read the link and add a "points_to" member...
-
-class DirObj( DirEntry ):
+   # static members that handle comparison of two objects
 
    compare_fields = (
       "name",           # TODO: this should be controlled by the check_name parameter
@@ -212,24 +256,69 @@ class DirObj( DirEntry ):
       "perm",
    )
 
+   @staticmethod
+   def compare( old, new, check_name = False ):
+
+      diff_obj = DirEntry.compare_fields( old, new, FileObj.compare_fields, check_name )
+      return diff_obj
+
+
+   def __init__( self, parent, name ):
+      DirEntry.__init__( self, parent, name, IS_FILE )
+
+      # TODO: get the file size and other relevant details and add them
+      # as fields for the compare_field function
 
 
 
 
 
+class LinkObj( DirEntry ):
+
+   # static members that handle comparison of two objects
+
+   compare_fields = (
+      "name",           # TODO: this should be controlled by the check_name parameter
+      "ftype",
+      "perm",
+   )
 
    @staticmethod
-   def compare( old_dir, new_dir, check_name = False ):
+   def compare( old, new, check_name = False ):
 
-      assert old_dir.isdir()
-      assert new_dir.isdir()
+      diff_obj = DirEntry.compare_fields( old, new, LinkObj.compare_fields, check_name )
+      return diff_obj
 
-      diff_obj = DirEntry.compare( old_dir, new_dir, DirObj.compare_fields, check_name )
 
-      if old_dir.scanned and new_dir.scanned:
+   def __init__( self, parent, name ):
+      DirEntry.__init__( self, parent, name, IS_LINK )
 
-         # TODO: don't think we want to do this here!
-         DirObj.compare_children( old_dir, new_dir )
+      # TODO: read the link and add a "points_to" member...
+
+
+
+
+
+class DirObj( DirEntry ):
+
+
+   # static members that handle comparison of two objects
+
+   compare_fields = (
+      "name",           # TODO: this should be controlled by the check_name parameter
+      "ftype",
+      "perm",
+   )
+
+   @staticmethod
+   def compare( old, new, check_name = False ):
+
+      diff_obj = DirEntry.compare_fields( old, new, DirObj.compare_fields, check_name )
+
+      if old.isdir() and new.isdir():
+         if old.scanned and new.scanned:
+            # TODO: don't think we want to do this here!
+            DirObj.compare_children( old, new )
 
       return diff_obj
 
@@ -275,7 +364,7 @@ class DirObj( DirEntry ):
          old = old_dir.entries[ name ]
          new = new_dir.entries[ name ]
 
-         compare_objects( old, new, True )
+         DirEntry.compare_objects( old, new, True )
 
 
 
@@ -356,6 +445,13 @@ DIR_ENTRY_CLASSES = {
 
 }
 
+def get_class( ftype ):
+
+   if DIR_ENTRY_CLASSES.has_key( ftype ):
+      return DIR_ENTRY_CLASSES[ ftype ]
+
+   raise AssertionError
+
 def mk_entry( file_spec ):
 
    # split it up so we can get the parent
@@ -375,84 +471,6 @@ def mk_entry( file_spec ):
       return dentry_class( dir_spec, base_name )
 
    raise AssertionError
-
-
-# -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
-
-
-#  __        _____  ____  _  __  ___ _   _   ____  ____   ___   ____ ____  _____ ____ ____
-#  \ \      / / _ \|  _ \| |/ / |_ _| \ | | |  _ \|  _ \ / _ \ / ___|  _ \| ____/ ___/ ___|
-#   \ \ /\ / / | | | |_) | ' /   | ||  \| | | |_) | |_) | | | | |  _| |_) |  _| \___ \___ \
-#    \ V  V /| |_| |  _ <| . \   | || |\  | |  __/|  _ <| |_| | |_| |  _ <| |___ ___) |__) |
-#     \_/\_/  \___/|_| \_\_|\_\ |___|_| \_| |_|   |_| \_\\___/ \____|_| \_\_____|____/____/
-
-
-# TODO: these comparison fields need to be moved into their respective classes
-# like what's in DirObj
-
-def compare_files( old_file, new_file, check_name = False ):
-
-   print "DEBUG: comparing files"
-
-def compare_links( old_link, new_link, check_name = False ):
-
-   print "DEBUG: comparing links"
-
-DIR_ENTRY_COMPARATORS = {
-   IS_DIR   : DirObj.compare,
-   IS_FILE  : compare_files,
-   IS_LINK  : compare_links
-
-   # TODO: what about all of the other file types
-
-}
-
-def compare_objects( old_obj, new_obj, check_name ):
-
-   print """
--=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
-DEBUG: COMPARING OBJECTS
-
-old: %s
-new: %s
-""" % ( old_obj.get_spec(), new_obj.get_spec() )
-
-   if old_obj.get_spec() == new_obj.get_spec():
-      print "ERROR: comparing an object to itself"
-      sys.exit()
-
-   if old_obj.ftype != new_obj.ftype:
-      print "ERROR: objects are *NOT* the same type"
-      sys.exit()
-
-   print "DEBUG: objects *ARE* the same type '%s'" % old_obj.ftype
-
-   # at this point we know the ftypes are the same, so we can use either one
-   ftype = old_obj.ftype
-
-   if DIR_ENTRY_COMPARATORS.has_key( ftype ):
-      compare_fn = DIR_ENTRY_COMPARATORS[ ftype ]
-      return compare_fn( old_obj, new_obj, check_name )
-
-   raise AssertionError
-
-
-
-
-
-
-
-def compare_entries( old_entry, new_entry, check_name = False ):
-
-   # use the factory to instantiate objects for each entry
-
-   old_obj = mk_entry( old_entry )
-   old_obj.scan()
-
-   new_obj = mk_entry( new_entry )
-   new_obj.scan()
-
-   compare_objects( old_obj, new_obj, check_name )
 
 
 
@@ -507,23 +525,20 @@ def dump_objs( args ):
       dump_obj( obj )
       del obj
 
-def test_module():
+def test_module( args = None ):
 
-   args = sys.argv[1:]
+   if not args:
+      args = sys.argv[1:]
 
    if len( args ):
       dump_objs( args )
    else:
       print "ERROR: specify one or more things to discover..."
 
+def run_module( args = None ):
 
-# -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
-
-if __name__ == "__main__":
-
-   # test_module()
-
-   args = sys.argv[1:]
+   if not args:
+      args = sys.argv[1:]
 
    if len( args ) != 2:
       print "ERROR: specify exactly 2 objects to compare"
@@ -532,9 +547,15 @@ if __name__ == "__main__":
    # get the args
    old, new = args
    # and call the comparison function
-   compare_entries( old, new )
+   DirEntry.compare_entries( old, new )
+
+# -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+if __name__ == "__main__":
+
+   run_module()
 
 
 
 
-
+# vim: syntax=python si

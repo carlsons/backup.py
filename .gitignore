@@ -1,5 +1,4 @@
-dir_new
-dir_old
-bletch
-*.pyc
 diff.txt
+*.pyc
+dir_*
+bletch

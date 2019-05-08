@@ -13,7 +13,7 @@ import collections
 import traceback
 import pprint
 
-DEBUG = True
+DEBUG = False
 VERBOSE = True
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -41,18 +41,18 @@ DIR_ENTRY_TYPES = [
 ]
 
 # these strings enumerate the different difference categories
+CAT_SAME    = "SAME"
+CAT_DIFF    = "DIFF"
 CAT_SRC     = "SRC"
 CAT_DST     = "DST"
-CAT_SAME    = "SAME"
 CAT_TYPE    = "TYPE"
-CAT_DIFF    = "DIFF"
 
 CAT_ALL     = [
+   CAT_SAME,
+   CAT_DIFF,
    CAT_SRC,
    CAT_DST,
-   CAT_SAME,
    CAT_TYPE,
-   CAT_DIFF,
 ]
 
 def get_stat( file_spec ):
@@ -94,6 +94,29 @@ def get_stat_type( file_spec ):
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
+# DEBUG functions
+
+def DEBUG_emit_compare_object( tag, obj ):
+      print "%s: %s: root=%s rel_path=%s name=%s" %( tag, obj.ftype, obj.root, obj.rel_path, obj.name )
+
+def DEBUG_emit_compare_banner( src, dst ):
+
+   if DEBUG:
+      print """
+-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+DEBUG: COMPARING OBJECTS
+"""
+      DEBUG_emit_compare_object( "src", src )
+      DEBUG_emit_compare_object( "dst", dst )
+      print ""
+
+def DEBUG_dump_set( name, obj ):
+
+   if DEBUG:
+      print "%12s: %s" % ( name, pprint.pformat( obj ) )
+
+# -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
 # helper classes and functions
 
 class RootObj:
@@ -111,9 +134,209 @@ class RootObj:
       #pprint.pprint( self.__dict__ )
       print "\nDUMP: class '%s'\n%s" % ( self.__class__, self )
 
+
+class DirEntryPerms( RootObj ):
+
+   def __init__( self, stat_info ):
+      RootObj.__init__( self )
+      self.val   = stat.S_IMODE( stat_info.st_mode )
+
+   def __str__( self ):
+      return "%s" % oct( self.val )
+
+   def __eq__( self, other ):
+      return self.val == other.val
+
+# -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+# this is the main "application" class
+
+class DirScanner( RootObj ):
+
+   def __init__( self, src_input, dst_input, preserve = False ):
+
+      assert isinstance( src_input, basestring )
+      assert isinstance( dst_input, basestring )
+
+      self.src_input = src_input
+      self.src       = None         # placeholder
+      self.dst_input = dst_input
+      self.dst       = None         # placeholder
+
+      self.preserve  = preserve     # whether we preserve "same" entries
+
+      self.started   = False
+
+      self.diff_set  = None
+
+      self.dir_queue = list()
+
+
+   def run( self ):
+
+      # disallow reuse of an object
+      assert not self.started
+
+      self.src = mk_entry( self.src_input )
+      self.dst = mk_entry( self.dst_input )
+
+      diff_obj = self.__compare( self.src, self.dst )
+
+      # TODO: this needs to be refactored so that the scan is not recursive
+
+      if self.dst.isdir() and self.src.isdir():
+
+         self.diff_set = DiffSet()
+
+         self.dst.scan()
+         self.src.scan()
+
+         # TODO: this should return a tuple like:
+         # ( same_list, diff_list, src_only_lst, dst_only_list )
+
+         self.__compare_children( self.src, self.dst )
+
+      while len( self.dir_queue ):
+
+         diff_obj = self.dir_queue.pop(0)
+         diff_obj.scan()
+
+         self.__compare_children( diff_obj.src, diff_obj.dst )
+
+      # :self.diff_set.dump() # DEBUG
+
+
+      self.diff_set.show()
+
+
+
+   def __compare( self, src, dst ):
+
+      DEBUG_emit_compare_banner( src, dst )
+
+      if dst.get_spec() == src.get_spec():
+         print "ERROR: comparing an object to itself"
+         sys.exit()
+
+      if src.ftype != dst.ftype:
+
+         diff_obj = DiffEntry( src, dst )
+         diff_obj.add_field( "ftype" )
+
+         # print "\nDEBUG: diff_object category: %s" % diff_obj.get_category()
+
+         return diff_obj   # <<<--- EARLY EXIT
+
+      # at this point we know the ftypes are the same, so we can use either one
+      ftype = dst.ftype
+      # get the class object associated with this file type
+      dentry_class = get_class( ftype )
+      # get the static comparison function
+      compare_fn = dentry_class.compare
+
+      # do the comparison and get the diff object
+      diff_obj = compare_fn( src, dst )
+
+      # print "\nDEBUG: diff_object category: %s" % diff_obj.get_category()
+
+      return diff_obj
+
+
+   def __compare_children( self, dst_dir, src_dir ):
+
+      assert dst_dir.isdir()
+      assert dst_dir.scanned
+      assert src_dir.isdir()
+      assert src_dir.scanned
+
+      # get the keys (i.e.: the names) of the entries from both dst and src
+      src_set     = set( src_dir.entries.keys() )
+      dst_set     = set( dst_dir.entries.keys() )
+      # find the intersection, i.e.: the entry names that appear in both the dst and src
+      union       = dst_set.union( src_set )
+      intersect   = dst_set.intersection( src_set )
+      # now subtract out the intersection to get what's unique in both
+      src_only    = src_set - intersect
+      dst_only    = dst_set - intersect
+
+      # these are the raw sets for the source and destination; these are used to
+      # calculate all of the other sets
+      DEBUG_dump_set( "src_set",    src_set )
+      DEBUG_dump_set( "dst_set",    dst_set )
+      # this is the sum of the two sets; we really don't need this
+      DEBUG_dump_set( "union",      union )
+
+      # these reflect the large scale groupings
+      DEBUG_dump_set( "src_only",   src_only )
+      DEBUG_dump_set( "intersect",  intersect )
+      DEBUG_dump_set( "dst_only",   dst_only )
+
+
+      # TODO: LEFT OFF HERE!!! need to scan the directory entries
+
+
+      self.__copy_children( src_dir, src_only, DirScanner.__mk_src_only )
+
+
+      self.__copy_children( dst_dir, dst_only, DirScanner.__mk_dst_only )
+
+
+      for name in intersect:
+
+         src = src_dir.entries[ name ]
+         dst = dst_dir.entries[ name ]
+
+         diff_obj = self.__compare( src, dst )
+
+         self.diff_set.add_entry( diff_obj );
+
+         if src.isdir() and dst.isdir():
+            self.dir_queue.append( diff_obj )
+
+      if src.isdir():
+         src.reset()
+
+      if dst.isdir():
+         dst.reset()
+
+
+
+   @staticmethod
+   def __mk_src_only( obj ):
+      return DiffEntry( obj, None )
+
+   @staticmethod
+   def __mk_dst_only( obj ):
+      return DiffEntry( None, obj )
+
+
+   def __copy_children( self, from_dir, names, mk_diff_fn ):
+
+      for name in names:
+         # get the source object
+         obj = from_dir.entries[ name ]
+         # create a diff entry for it
+         diff_obj = mk_diff_fn( obj );
+         # and adde it to the result
+         self.diff_set.add_entry( diff_obj )
+
+
+
+
+
+# -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+# this class identifies two corresponding DirEntry objects
+
 class DiffEntry( RootObj ):
 
    def __init__( self, src, dst ):
+
+      if src:
+         assert issubclass( src.__class__, DirEntry )
+
+      if dst:
+         assert issubclass( dst.__class__, DirEntry )
 
       # call the base class constructor
       RootObj.__init__( self )
@@ -124,6 +347,14 @@ class DiffEntry( RootObj ):
       self.fields = []
 
       self.ftype_mismatch = False
+
+      self.show  = {
+         CAT_SAME    : self.__show_same,
+         CAT_DIFF    : self.__show_diff,
+         CAT_SRC     : self.__show_src_only,
+         CAT_DST     : self.__show_dst_only,
+         CAT_TYPE    : self.__show_diff_type,
+      }
 
    def add_field( self, field ):
       self.fields.append( field )
@@ -152,162 +383,145 @@ class DiffEntry( RootObj ):
 
       return CAT_DIFF # "DIFF"
 
-class DirEntryPerms( RootObj ):
+   def get_key( self ):
 
-   def __init__( self, stat_info ):
-      RootObj.__init__( self )
-      self.val   = stat.S_IMODE( stat_info.st_mode )
+      if self.src and self.dst:
 
-   def __str__( self ):
-      return "%s" % oct( self.val )
+         assert self.src.rel_path == self.dst.rel_path
+         assert self.src.name     == self.dst.name
 
-   def __eq__( self, other ):
-      return self.val == other.val
+         return self.src.get_relspec()
 
-def DEBUG_emit_compare_object( tag, obj ):
-      print "%s: %s: root=%s rel_path=%s name=%s" %( tag, obj.ftype, obj.root, obj.rel_path, obj.name )
+      if self.src:
+         return self.src.get_relspec()
 
-def DEBUG_emit_compare_banner( src, dst ):
+      return self.dst.get_relspec()
 
-   if DEBUG:
-      print """
--=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
-DEBUG: COMPARING OBJECTS
-"""
-      DEBUG_emit_compare_object( "src", src )
-      DEBUG_emit_compare_object( "dst", dst )
-      print ""
+   def scan( self ):
+      if self.src and self.src.isdir():
+         self.src.scan()
+      if self.dst and self.dst.isdir():
+         self.dst.scan()
 
-def DEBUG_dump_set( name, obj ):
 
-   if DEBUG:
-      print "%12s: %s" % ( name, pprint.pformat( obj ) )
+   def show( self ):
+
+      fn = self.show[ self.get_category() ]
+      fn()
+
+   @staticmethod
+   def __show( obj ):
+      print "%8s: %s" % ( obj.get_category(), obj.get_relspec() )
+
+   def __show_same( self ):
+      __show( self )
+
+   def __show_diff( self ):
+      __show( self )
+
+   def __show_src_only( self ):
+      __show( self )
+
+   def __show_dst_only( self ):
+      __show( self )
+
+   def __show_diff_type( self ):
+      __show( self )
+
+
+
+
+
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
-class DirScanner( RootObj ):
+# this class collects a set of DiffEntry objects in category specific
+# dictionaries
 
-   def __init__( self, src_input, dst_input, preserve = False ):
+class DiffSet( RootObj ):
 
-      assert isinstance( src_input, basestring )
-      assert isinstance( dst_input, basestring )
+   def __init__( self ):
 
-      self.src_input = src_input
-      self.src       = None         # placeholder
-      self.dst_input = dst_input
-      self.dst       = None         # placeholder
-
-      self.preserve  = preserve     # whether we preserve "same" entries
-
-      self.started   = False
+      # call the base class constructor
+      RootObj.__init__( self )
 
       # collections
+      self.all       = dict()
       self.same      = dict()
       self.diff      = dict()
       self.src_only  = dict()
       self.dst_only  = dict()
+      self.diff_type = dict() 
 
       self.category  = {
+         CAT_SAME    : self.same,
+         CAT_DIFF    : self.diff,
          CAT_SRC     : self.src_only,
          CAT_DST     : self.dst_only,
-         CAT_SAME    : self.same,
-         CAT_TYPE    : self.diff,
-         CAT_DIFF    : self.diff,
+         CAT_TYPE    : self.diff_type,
       }
 
 
-   def run( self ):
+   def add_entry( self, diff_obj ):
 
-      # disallow reuse of an object
-      assert not self.started
+      assert isinstance( diff_obj, DiffEntry )
 
-      self.src = mk_entry( self.src_input )
-      self.dst = mk_entry( self.dst_input )
+      # get the key and category for this difference entry
+      diff_key = diff_obj.get_key()
+      diff_cat = diff_obj.get_category()
+      # get the dictionary for the given category
+      cat_dict = self.category[ diff_cat ]
 
-      diff_obj = self.__compare( self.src, self.dst )
+      # make sure we don't have any duplicates
+      assert not cat_dict.has_key( diff_key )
 
-      # TODO: this needs to be refactored so that the scan is not recursive
-
-      if self.dst.isdir() and self.src.isdir():
-
-         self.dst.scan()
-         self.src.scan()
-
-         # TODO: this should return a tuple like:
-         # ( same_list, diff_list, src_only_lst, dst_only_list )
-
-         self.__compare_children( self.src, self.dst )
+      # insert the object into the appropriate dictionary
+      cat_dict[ diff_key ] = diff_obj
+      # add it to the superset
+      self.all[ diff_key ] = diff_obj
 
 
+   def __show( self ):
 
-   def __compare( self, src, dst ):
+      for cat_name in CAT_ALL:
+         cat = self.category[ cat_name ]
+         for key in cat.keys():
+            print "%8s: %s" % ( cat_name, key )
 
-      DEBUG_emit_compare_banner( src, dst )
+   def show( self ):
 
-      if dst.get_spec() == src.get_spec():
-         print "ERROR: comparing an object to itself"
-         sys.exit()
+      keys = self.all.keys()
+      keys.sort()
 
-      if src.ftype != dst.ftype:
-
-         print "ERROR: comparing objects of different types"
-         diff_obj = DiffEntry( src, dst )
-         diff_obj.add_field( "ftype" )
-
-         print "\nDEBUG: diff_object category: %s" % diff_obj.get_category()
-
-         return diff_obj   # <<<--- EARLY EXIT
-
-      # at this point we know the ftypes are the same, so we can use either one
-      ftype = dst.ftype
-      # get the class object associated with this file type
-      dentry_class = get_class( ftype )
-      # get the static comparison function
-      compare_fn = dentry_class.compare
-
-      # do the comparison and get the diff object
-      diff_obj = compare_fn( src, dst )
-
-      print "\nDEBUG: diff_object category: %s" % diff_obj.get_category()
-
-      return diff_obj
+      for key in keys:
+         diff_obj = self.all[ key ]
+         print "%8s: %s" % ( diff_obj.get_category(), diff_obj.get_key() )
 
 
 
-   def __compare_children( self, dst_dir, src_dir ):
+   def dump( self ):
 
-      assert dst_dir.isdir()
-      assert dst_dir.scanned
-      assert src_dir.isdir()
-      assert src_dir.scanned
+      print """
+-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+DEBUG: DUMPING DIFFERENCES
+"""
+      print "DUMP: class '%s'" % self.__class__
 
-      # get the keys (i.e.: the names) of the entries from both dst and src
-      src_set     = set( src_dir.entries.keys() )
-      dst_set     = set( dst_dir.entries.keys() )
-      # find the intersection, i.e.: the entry names that appear in both the dst and src
-      union       = dst_set.union( src_set )
-      intersect   = dst_set.intersection( src_set )
-      # now subtract out the intersection to get what's unique in both
-      dst_only    = dst_set - intersect
-      src_only    = src_set - intersect
+      for cat_name in CAT_ALL:
 
-      print "" # DEBUG:
+         print """
+--------------------------------------------------------------------------------
+DEBUG: DUMPING CATEGORY
+"""
+         print "DUMP: category '%s'" % cat_name
 
-      DEBUG_dump_set( "src_set",    src_set )
-      DEBUG_dump_set( "dst_set",    dst_set )
-      DEBUG_dump_set( "union",      union )
-      DEBUG_dump_set( "intersect",  intersect )
-      DEBUG_dump_set( "src_only",   src_only )
-      DEBUG_dump_set( "dst_only",   dst_only )
+         cat = self.category[ cat_name ]
 
-      # TODO: LEFT OFF HERE!!! need to scan the directory entries
+         for key in cat.keys():
 
-      for name in intersect:
+            print "\nDUMP: entry '%s'" % key
 
-         dst = dst_dir.entries[ name ]
-         src = src_dir.entries[ name ]
-
-         self.__compare( src, dst )
+            cat[ key ].dump()
 
 
 
@@ -329,7 +543,7 @@ class DirEntry( RootObj ):
       if dst_val == src_val:
          is_equal = True
 
-      print "DEBUG: %s.%s: '%s' %s= '%s'" % ( dst.__class__, field, dst_val, ( "=" if is_equal else "!" ), src_val )
+      # print "DEBUG: %s.%s: '%s' %s= '%s'" % ( dst.__class__, field, dst_val, ( "=" if is_equal else "!" ), src_val )
 
       return is_equal
 
@@ -350,7 +564,6 @@ class DirEntry( RootObj ):
             diff_obj.add_field( field )
 
       return diff_obj
-
 
    def __init__( self, root, rel_path, name, ftype ):
 
@@ -376,7 +589,12 @@ class DirEntry( RootObj ):
       return False
 
    def get_spec( self ):
+      assert self.root
       return join_path( self.root, self.rel_path, self.name )
+
+   def get_relspec( self ):
+      assert self.name
+      return join_path( self.rel_path, self.name )
 
 
 
@@ -386,10 +604,13 @@ class DirEntry( RootObj ):
 
 class FileObj( DirEntry ):
 
+   # TODO: setup comparison fields and related
+
    compare_fields = (
       "name",           # TODO: this should be controlled by the check_name parameter
       "ftype",
       "perm",
+      "size",
    )
 
    @staticmethod
@@ -411,6 +632,8 @@ class FileObj( DirEntry ):
 # link object
 
 class LinkObj( DirEntry ):
+
+   # TODO: setup comparison fields and related
 
    compare_fields = (
       "name",           # TODO: this should be controlled by the check_name parameter
@@ -462,10 +685,7 @@ class DirObj( DirEntry ):
 
    def __mk_entry( self, entry_name ):
       # get the relative path of the entry
-      if self.rel_path:
-         rel_path = join_path( self.rel_path, self.name )
-      else:
-         rel_path = self.name
+      rel_path = join_path( self.rel_path, self.name )
       # and make an entry for it
       return mk_entry( self.root, rel_path, entry_name )
 
@@ -486,6 +706,12 @@ class DirObj( DirEntry ):
             entry_names.sort();
             for entry_name in entry_names:
                self.entries[ entry_name ] = self.__mk_entry( entry_name )
+
+   def reset( self ):
+
+      if self.scanned:
+         self.entries = dict()
+         self.scanned = False
 
    def dump( self ):
 
@@ -530,16 +756,16 @@ def get_class( ftype ):
    raise AssertionError
 
 
-def join_path( root, rel_path = None, name = None ):
+def join_path( *args ):
 
-   file_spec      = None
+   file_spec = None
 
-   if root:
-      file_spec   = root
-   if rel_path:
-      file_spec   = os.path.join( file_spec, rel_path )
-   if name:
-      file_spec   = os.path.join( file_spec, name )
+   for arg in args:
+      if arg:
+         if not file_spec:
+            file_spec = arg
+         else:
+            file_spec = os.path.join( file_spec, arg )
 
    return file_spec
 
@@ -566,12 +792,12 @@ def mk_entry( root, rel_path = None, name = None ):
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
-#   _____ _____ ____ _____    ____ ___  ____  _____
-#  |_   _| ____/ ___|_   _|  / ___/ _ \|  _ \| ____|
-#    | | |  _| \___ \ | |   | |  | | | | | | |  _|
-#    | | | |___ ___) || |   | |__| |_| | |_| | |___
-#    |_| |_____|____/ |_|    \____\___/|____/|_____|
-#  TAGS: TEST CODE
+#  _____ _____ ____ _____    ____ ___  ____  _____
+# |_   _| ____/ ___|_   _|  / ___/ _ \|  _ \| ____|
+#   | | |  _| \___ \ | |   | |  | | | | | | |  _|
+#   | | | |___ ___) || |   | |__| |_| | |_| | |___
+#   |_| |_____|____/ |_|    \____\___/|____/|_____|
+# TAGS: TEST CODE
 
 def dump_obj( obj ):
 
@@ -613,21 +839,47 @@ def dump_objs( args ):
       dump_obj( obj )
       del obj
 
-def test_module( args = None ):
+# -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+# top-level run commands, for processing command line modes
+
+def run_unit_test( args = None ):
 
    if not args:
       args = sys.argv[1:]
+   if len( args ) != 3:
+      print "ERROR: specify <src dir> <dst dir> <name>"
+      sys.exit(1)
 
-   if len( args ):
-      dump_objs( args )
-   else:
-      print "ERROR: specify one or more things to discover..."
+   dir_src, dir_dst, name = args
+
+   src = mk_entry( '.', dir_src, name )
+   dst = mk_entry( '.', dir_src, name )
+
+   de = DiffEntry( src, dst )
+   de.add_field( "ftype" )
+
+   ds = DiffSet()
+   ds.add_entry( de )
+
+   ds.dump()
+
+
+def run_dump_objs( args = None ):
+
+   if not args:
+      args = sys.argv[1:]
+   if not len( args ):
+      print "ERROR: specify one or more things to dump..."
+      sys.exit(1)
+
+   dump_objs( args )
+
 
 def run_module( args = None ):
 
    if not args:
       args = sys.argv[1:]
-
    if len( args ) != 2:
       print "ERROR: specify exactly 2 objects to compare"
       sys.exit()
@@ -638,12 +890,43 @@ def run_module( args = None ):
    ds = DirScanner( src, dst )
    ds.run()
 
+
+
+
+
+
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+#  __  __    _    ___ _   _
+# |  \/  |  / \  |_ _| \ | |
+# | |\/| | / _ \  | ||  \| |
+# | |  | |/ ___ \ | || |\  |
+# |_|  |_/_/   \_\___|_| \_|
+# TAGS: MAIN
 
 if __name__ == "__main__":
 
-   run_module()
+   if len( sys.argv ) > 1: 
 
+      if sys.argv[1] == '--test':
+
+         run_unit_test( sys.argv[2:] )
+
+      elif sys.argv[1] == '--dump':
+
+         run_dump_objs( sys.argv[2:] )
+
+      elif sys.argv[1] == '--run':
+
+         run_module( sys.argv[2:] )
+
+      else:
+
+         run_module( sys.argv[1:] )
+
+   else:
+
+      print "ERROR: what do you want me to do???"
 
 
 

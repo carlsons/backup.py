@@ -115,6 +115,7 @@ def DEBUG_dump_set( name, obj ):
    if DEBUG:
       print "%12s: %s" % ( name, pprint.pformat( obj ) )
 
+
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
 # helper classes and functions
@@ -146,6 +147,7 @@ class DirEntryPerms( RootObj ):
 
    def __eq__( self, other ):
       return self.val == other.val
+
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
@@ -205,9 +207,7 @@ class DirScanner( RootObj ):
 
       # :self.diff_set.dump() # DEBUG
 
-
       self.diff_set.show()
-
 
 
    def __compare( self, src, dst ):
@@ -220,7 +220,7 @@ class DirScanner( RootObj ):
 
       if src.ftype != dst.ftype:
 
-         diff_obj = DiffEntry( src, dst )
+         diff_obj = DiffObj( src, dst )
          diff_obj.add_field( "ftype" )
 
          # print "\nDEBUG: diff_object category: %s" % diff_obj.get_category()
@@ -253,33 +253,23 @@ class DirScanner( RootObj ):
       src_set     = set( src_dir.entries.keys() )
       dst_set     = set( dst_dir.entries.keys() )
       # find the intersection, i.e.: the entry names that appear in both the dst and src
-      union       = dst_set.union( src_set )
       intersect   = dst_set.intersection( src_set )
       # now subtract out the intersection to get what's unique in both
       src_only    = src_set - intersect
       dst_only    = dst_set - intersect
 
-      # these are the raw sets for the source and destination; these are used to
-      # calculate all of the other sets
+      # dump the sets for debugging purposes
+      # these are the base sets
       DEBUG_dump_set( "src_set",    src_set )
       DEBUG_dump_set( "dst_set",    dst_set )
-      # this is the sum of the two sets; we really don't need this
-      DEBUG_dump_set( "union",      union )
-
-      # these reflect the large scale groupings
+      # these are the actual categories
       DEBUG_dump_set( "src_only",   src_only )
       DEBUG_dump_set( "intersect",  intersect )
       DEBUG_dump_set( "dst_only",   dst_only )
 
-
-      # TODO: LEFT OFF HERE!!! need to scan the directory entries
-
-
+      # create DiffObj instances for orphans and add them to the diff_set
       self.__copy_children( src_dir, src_only, DirScanner.__mk_src_only )
-
-
       self.__copy_children( dst_dir, dst_only, DirScanner.__mk_dst_only )
-
 
       for name in intersect:
 
@@ -300,16 +290,6 @@ class DirScanner( RootObj ):
          dst.reset()
 
 
-
-   @staticmethod
-   def __mk_src_only( obj ):
-      return DiffEntry( obj, None )
-
-   @staticmethod
-   def __mk_dst_only( obj ):
-      return DiffEntry( None, obj )
-
-
    def __copy_children( self, from_dir, names, mk_diff_fn ):
 
       for name in names:
@@ -321,22 +301,29 @@ class DirScanner( RootObj ):
          self.diff_set.add_entry( diff_obj )
 
 
+   @staticmethod
+   def __mk_src_only( obj ):
+      return DiffObj( obj, None )
+
+   @staticmethod
+   def __mk_dst_only( obj ):
+      return DiffObj( None, obj )
 
 
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
-# this class identifies two corresponding DirEntry objects
+# this class identifies two corresponding BaseObj objects
 
-class DiffEntry( RootObj ):
+class DiffObj( RootObj ):
 
    def __init__( self, src, dst ):
 
       if src:
-         assert issubclass( src.__class__, DirEntry )
+         assert issubclass( src.__class__, BaseObj )
 
       if dst:
-         assert issubclass( dst.__class__, DirEntry )
+         assert issubclass( dst.__class__, BaseObj )
 
       # call the base class constructor
       RootObj.__init__( self )
@@ -348,7 +335,7 @@ class DiffEntry( RootObj ):
 
       self.ftype_mismatch = False
 
-      self.show  = {
+      self.show_methods  = {
          CAT_SAME    : self.__show_same,
          CAT_DIFF    : self.__show_diff,
          CAT_SRC     : self.__show_src_only,
@@ -397,45 +384,43 @@ class DiffEntry( RootObj ):
 
       return self.dst.get_relspec()
 
+   def get_fields( self ):
+      return ",".join( self.fields )
+
    def scan( self ):
       if self.src and self.src.isdir():
          self.src.scan()
       if self.dst and self.dst.isdir():
          self.dst.scan()
 
-
    def show( self ):
 
-      fn = self.show[ self.get_category() ]
+      fn = self.show_methods[ self.get_category() ]
       fn()
 
    @staticmethod
    def __show( obj ):
-      print "%8s: %s" % ( obj.get_category(), obj.get_relspec() )
+      print "%8s: %-40s (%s)" % ( obj.get_category(), obj.get_key(), obj.get_fields() )
 
    def __show_same( self ):
-      __show( self )
+      self.__show( self )
 
    def __show_diff( self ):
-      __show( self )
+      self.__show( self )
 
    def __show_src_only( self ):
-      __show( self )
+      self.__show( self )
 
    def __show_dst_only( self ):
-      __show( self )
+      self.__show( self )
 
    def __show_diff_type( self ):
-      __show( self )
-
-
-
-
+      self.__show( self )
 
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
-# this class collects a set of DiffEntry objects in category specific
+# this class collects a set of DiffObj objects in category specific
 # dictionaries
 
 class DiffSet( RootObj ):
@@ -464,7 +449,7 @@ class DiffSet( RootObj ):
 
    def add_entry( self, diff_obj ):
 
-      assert isinstance( diff_obj, DiffEntry )
+      assert isinstance( diff_obj, DiffObj )
 
       # get the key and category for this difference entry
       diff_key = diff_obj.get_key()
@@ -480,7 +465,7 @@ class DiffSet( RootObj ):
       # add it to the superset
       self.all[ diff_key ] = diff_obj
 
-
+   # not currently used
    def __show( self ):
 
       for cat_name in CAT_ALL:
@@ -495,7 +480,7 @@ class DiffSet( RootObj ):
 
       for key in keys:
          diff_obj = self.all[ key ]
-         print "%8s: %s" % ( diff_obj.get_category(), diff_obj.get_key() )
+         diff_obj.show()
 
 
 
@@ -524,12 +509,12 @@ DEBUG: DUMPING CATEGORY
             cat[ key ].dump()
 
 
-
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
-# this is the main base class for all 
+# this is the base class for all directory entry objects, i.e.: files, links
+# and directories
 
-class DirEntry( RootObj ):
+class BaseObj( RootObj ):
 
    # these are helper functions used by the derived class to compare the objects
 
@@ -551,16 +536,16 @@ class DirEntry( RootObj ):
    def compare_fields( src, dst, fields, check_name = False ):
 
       assert src.__class__ == dst.__class__
-      assert issubclass( src.__class__, DirEntry )
+      assert issubclass( src.__class__, BaseObj )
 
       if check_name:
          assert dst.name == src.name
 
-      diff_obj = DiffEntry( src, dst )
+      diff_obj = DiffObj( src, dst )
 
       for field in fields:
 
-         if not DirEntry.compare_field( src, dst, field ):
+         if not BaseObj.compare_field( src, dst, field ):
             diff_obj.add_field( field )
 
       return diff_obj
@@ -597,12 +582,11 @@ class DirEntry( RootObj ):
       return join_path( self.rel_path, self.name )
 
 
-
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
 # file object
 
-class FileObj( DirEntry ):
+class FileObj( BaseObj ):
 
    # TODO: setup comparison fields and related
 
@@ -610,55 +594,62 @@ class FileObj( DirEntry ):
       "name",           # TODO: this should be controlled by the check_name parameter
       "ftype",
       "perm",
+      "uid",
+      "gid",
       "size",
+      "mtime",
    )
 
    @staticmethod
    def compare( src, dst, check_name = False ):
 
-      diff_obj = DirEntry.compare_fields( src, dst, FileObj.compare_fields, check_name )
+      diff_obj = BaseObj.compare_fields( src, dst, FileObj.compare_fields, check_name )
       return diff_obj
 
    def __init__( self, root, rel_path, name ):
-      DirEntry.__init__( self, root, rel_path, name, IS_FILE )
+      BaseObj.__init__( self, root, rel_path, name, IS_FILE )
 
       # TODO: get the file size and other relevant details and add them
       # as fields for the compare_field function
-
 
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
 # link object
 
-class LinkObj( DirEntry ):
+class LinkObj( BaseObj ):
 
    # TODO: setup comparison fields and related
 
    compare_fields = (
       "name",           # TODO: this should be controlled by the check_name parameter
       "ftype",
-      "perm",
+      "uid",
+      "gid",
+      "size",
+      "mtime",
+      "link",
    )
 
    @staticmethod
    def compare( src, dst, check_name = False ):
 
-      diff_obj = DirEntry.compare_fields( src, dst, LinkObj.compare_fields, check_name )
+      diff_obj = BaseObj.compare_fields( src, dst, LinkObj.compare_fields, check_name )
       return diff_obj
 
    def __init__( self, root, rel_path, name ):
-      DirEntry.__init__( self, root, rel_path, name, IS_LINK )
+      BaseObj.__init__( self, root, rel_path, name, IS_LINK )
 
       # TODO: read the link and add a "points_to" member...
 
+      self.link = os.readlink( self.get_spec() )
 
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
 # directory object
 
-class DirObj( DirEntry ):
+class DirObj( BaseObj ):
 
    compare_fields = (
       "name",           # TODO: this should be controlled by the check_name parameter
@@ -669,14 +660,14 @@ class DirObj( DirEntry ):
    @staticmethod
    def compare( src, dst, check_name = False ):
 
-      diff_obj = DirEntry.compare_fields( src, dst, DirObj.compare_fields, check_name )
+      diff_obj = BaseObj.compare_fields( src, dst, DirObj.compare_fields, check_name )
       return diff_obj
 
    def __init__( self, root, rel_path = None, name = None ):
 
       root              = os.path.abspath( root )
 
-      DirEntry.__init__( self, root, rel_path, name, IS_DIR )
+      BaseObj.__init__( self, root, rel_path, name, IS_DIR )
 
       self.entries      = None
       self.scanned      = False
@@ -856,7 +847,7 @@ def run_unit_test( args = None ):
    src = mk_entry( '.', dir_src, name )
    dst = mk_entry( '.', dir_src, name )
 
-   de = DiffEntry( src, dst )
+   de = DiffObj( src, dst )
    de.add_field( "ftype" )
 
    ds = DiffSet()

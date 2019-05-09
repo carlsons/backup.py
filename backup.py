@@ -153,7 +153,7 @@ class DirEntryPerms( RootObj ):
 
 # this is the main "application" class
 
-class DirScanner( RootObj ):
+class DiffScanner( RootObj ):
 
    def __init__( self, src_input, dst_input, preserve = False ):
 
@@ -859,11 +859,8 @@ def run_module( args = None ):
    # get the args
    src, dst = args
    # and call the comparison function
-   ds = DirScanner( src, dst )
+   ds = DiffScanner( src, dst )
    ds.run()
-
-
-
 
 
 

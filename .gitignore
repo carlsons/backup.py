@@ -1,4 +1,6 @@
 diff.txt
 *.pyc
+*.dat
+*.md5
 dir_*
 bletch

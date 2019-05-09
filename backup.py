@@ -189,24 +189,14 @@ class DirScanner( RootObj ):
       if self.dst.isdir() and self.src.isdir():
 
          self.diff_set = DiffSet()
-
-         self.dst.scan()
-         self.src.scan()
-
-         # TODO: this should return a tuple like:
-         # ( same_list, diff_list, src_only_lst, dst_only_list )
-
          self.__compare_children( self.src, self.dst )
 
       while len( self.dir_queue ):
 
          diff_obj = self.dir_queue.pop(0)
-         diff_obj.scan()
+         self.__compare_children( *diff_obj.get_objs() )
 
-         self.__compare_children( diff_obj.src, diff_obj.dst )
-
-      # :self.diff_set.dump() # DEBUG
-
+      # TODO: this needs to be moved to the cmdline processing context
       self.diff_set.show()
 
 
@@ -242,39 +232,40 @@ class DirScanner( RootObj ):
       return diff_obj
 
 
-   def __compare_children( self, dst_dir, src_dir ):
+   def __compare_children( self, src_obj, dst_obj ):
 
-      assert dst_dir.isdir()
-      assert dst_dir.scanned
-      assert src_dir.isdir()
-      assert src_dir.scanned
+      assert src_obj.isdir()
+      assert dst_obj.isdir()
+
+      src_obj.scan()
+      dst_obj.scan()
 
       # get the keys (i.e.: the names) of the entries from both dst and src
-      src_set     = set( src_dir.entries.keys() )
-      dst_set     = set( dst_dir.entries.keys() )
+      src_key_set    = set( src_obj.entries.keys() )
+      dst_key_set    = set( dst_obj.entries.keys() )
       # find the intersection, i.e.: the entry names that appear in both the dst and src
-      intersect   = dst_set.intersection( src_set )
+      intersect_keys = dst_key_set.intersection( src_key_set )
       # now subtract out the intersection to get what's unique in both
-      src_only    = src_set - intersect
-      dst_only    = dst_set - intersect
+      src_only_keys  = src_key_set - intersect_keys
+      dst_only_keys  = dst_key_set - intersect_keys
 
       # dump the sets for debugging purposes
       # these are the base sets
-      DEBUG_dump_set( "src_set",    src_set )
-      DEBUG_dump_set( "dst_set",    dst_set )
+      DEBUG_dump_set( "src_set",    src_key_set )
+      DEBUG_dump_set( "dst_set",    dst_key_set )
       # these are the actual categories
-      DEBUG_dump_set( "src_only",   src_only )
-      DEBUG_dump_set( "intersect",  intersect )
-      DEBUG_dump_set( "dst_only",   dst_only )
+      DEBUG_dump_set( "src_only",   src_only_keys )
+      DEBUG_dump_set( "intersect",  intersect_keys )
+      DEBUG_dump_set( "dst_only",   dst_only_keys )
 
       # create DiffObj instances for orphans and add them to the diff_set
-      self.__copy_children( src_dir, src_only, DirScanner.__mk_src_only )
-      self.__copy_children( dst_dir, dst_only, DirScanner.__mk_dst_only )
+      self.__copy_children( src_obj, src_only_keys, lambda obj: DiffObj( obj,  None ) )
+      self.__copy_children( dst_obj, dst_only_keys, lambda obj: DiffObj( None, obj ) )
 
-      for name in intersect:
+      for name in intersect_keys:
 
-         src = src_dir.entries[ name ]
-         dst = dst_dir.entries[ name ]
+         src = src_obj.entries[ name ]
+         dst = dst_obj.entries[ name ]
 
          diff_obj = self.__compare( src, dst )
 
@@ -299,16 +290,6 @@ class DirScanner( RootObj ):
          diff_obj = mk_diff_fn( obj );
          # and adde it to the result
          self.diff_set.add_entry( diff_obj )
-
-
-   @staticmethod
-   def __mk_src_only( obj ):
-      return DiffObj( obj, None )
-
-   @staticmethod
-   def __mk_dst_only( obj ):
-      return DiffObj( None, obj )
-
 
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -351,8 +332,8 @@ class DiffObj( RootObj ):
    def has_diffs( self ):
       return len( self.fields )
 
-   def get( self ):
-      return ( self.src, self.dst )
+   def get_objs( self ):
+      return [ self.src, self.dst ]
 
    def get_category( self ):
 

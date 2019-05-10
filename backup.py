@@ -13,6 +13,8 @@ import collections
 import traceback
 import pprint
 
+import argparse
+
 DEBUG = False
 VERBOSE = True
 
@@ -815,7 +817,7 @@ def dump_objs( args ):
 
 # top-level run commands, for processing command line modes
 
-def run_unit_test( args = None ):
+def run_test( args = None ):
 
    if not args:
       args = sys.argv[1:]
@@ -837,7 +839,7 @@ def run_unit_test( args = None ):
    ds.dump()
 
 
-def run_dump_objs( args = None ):
+def run_list( args = None ):
 
    if not args:
       args = sys.argv[1:]
@@ -848,7 +850,7 @@ def run_dump_objs( args = None ):
    dump_objs( args )
 
 
-def run_module( args = None ):
+def run_diff( args = None ):
 
    if not args:
       args = sys.argv[1:]
@@ -861,6 +863,12 @@ def run_module( args = None ):
    # and call the comparison function
    ds = DiffScanner( src, dst )
    ds.run()
+
+COMMANDS = {
+   "TEST"   : run_test,
+   "LIST"   : run_list,
+   "DIFF"   : run_diff,
+}
 
 
 
@@ -875,28 +883,31 @@ def run_module( args = None ):
 
 if __name__ == "__main__":
 
-   if len( sys.argv ) > 1: 
+   parser = argparse.ArgumentParser( "directory scanning, comparison and backup" )
 
-      if sys.argv[1] == '--test':
+   mode = parser.add_mutually_exclusive_group( required=True )
+   mode.add_argument( "-d", "--diff", action="store_const", const="DIFF", dest="mode", help="enables differencing mode"  )
+   mode.add_argument( "-l", "--list", action="store_const", const="LIST", dest="mode", help="enables list mode" )
+   mode.add_argument( "-t", "--test", action="store_const", const="TEST", dest="mode", help="enables bench testing" )
 
-         run_unit_test( sys.argv[2:] )
+   parser.add_argument( "--debug",    action="store_true",  default=False,             help="dump debugging information" )
+   parser.add_argument( "--verbose",  action="store_true",  default=False,             help="include extra information, where applicable" )
 
-      elif sys.argv[1] == '--dump':
+   parser.add_argument( "scopes", nargs=argparse.REMAINDER )
 
-         run_dump_objs( sys.argv[2:] )
+   args = parser.parse_args()
 
-      elif sys.argv[1] == '--run':
+   DEBUG    = args.debug
+   VERBOSE  = args.verbose
 
-         run_module( sys.argv[2:] )
+   if VERBOSE:
+      print "mode=%s"      % args.mode
+      print "debug=%s"     % args.debug
+      print "verbose=%s"   % args.verbose
+      print "scopes=%s"    % args.scopes
 
-      else:
-
-         run_module( sys.argv[1:] )
-
-   else:
-
-      print "ERROR: what do you want me to do???"
-
+   fn = COMMANDS[ args.mode ]
+   fn( args.scopes )
 
 
 # vim: syntax=python si

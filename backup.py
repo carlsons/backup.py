@@ -153,149 +153,6 @@ class DirEntryPerms( RootObj ):
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
-# this is the main "application" class
-
-class DiffScanner( RootObj ):
-
-   def __init__( self, src_input, dst_input, preserve = False ):
-
-      assert isinstance( src_input, basestring )
-      assert isinstance( dst_input, basestring )
-
-      self.src_input = src_input
-      self.src       = None         # placeholder
-      self.dst_input = dst_input
-      self.dst       = None         # placeholder
-
-      self.preserve  = preserve     # whether we preserve "same" entries
-
-      self.started   = False
-
-      self.diff_set  = None
-
-      self.dir_queue = list()
-
-
-   def run( self ):
-
-      # disallow reuse of an object
-      assert not self.started
-
-      self.src = mk_entry( self.src_input )
-      self.dst = mk_entry( self.dst_input )
-
-      diff_obj = self.__compare( self.src, self.dst )
-
-      # TODO: this needs to be refactored so that the scan is not recursive
-
-      if self.dst.isdir() and self.src.isdir():
-
-         self.diff_set = DiffSet()
-         self.__compare_children( self.src, self.dst )
-
-      while len( self.dir_queue ):
-
-         diff_obj = self.dir_queue.pop(0)
-         self.__compare_children( *diff_obj.get_objs() )
-
-      # TODO: this needs to be moved to the cmdline processing context
-      self.diff_set.show()
-
-
-   def __compare( self, src, dst ):
-
-      DEBUG_emit_compare_banner( src, dst )
-
-      if dst.get_spec() == src.get_spec():
-         print "ERROR: comparing an object to itself"
-         sys.exit()
-
-      if src.ftype != dst.ftype:
-
-         diff_obj = DiffObj( src, dst )
-         diff_obj.add_field( "ftype" )
-
-         # print "\nDEBUG: diff_object category: %s" % diff_obj.get_category()
-
-         return diff_obj   # <<<--- EARLY EXIT
-
-      # at this point we know the ftypes are the same, so we can use either one
-      ftype = dst.ftype
-      # get the class object associated with this file type
-      dentry_class = get_class( ftype )
-      # get the static comparison function
-      compare_fn = dentry_class.compare
-
-      # do the comparison and get the diff object
-      diff_obj = compare_fn( src, dst )
-
-      # print "\nDEBUG: diff_object category: %s" % diff_obj.get_category()
-
-      return diff_obj
-
-
-   def __compare_children( self, src_obj, dst_obj ):
-
-      assert src_obj.isdir()
-      assert dst_obj.isdir()
-
-      src_obj.scan()
-      dst_obj.scan()
-
-      # get the keys (i.e.: the names) of the entries from both dst and src
-      src_key_set    = set( src_obj.entries.keys() )
-      dst_key_set    = set( dst_obj.entries.keys() )
-      # find the intersection, i.e.: the entry names that appear in both the dst and src
-      intersect_keys = dst_key_set.intersection( src_key_set )
-      # now subtract out the intersection to get what's unique in both
-      src_only_keys  = src_key_set - intersect_keys
-      dst_only_keys  = dst_key_set - intersect_keys
-
-      # dump the sets for debugging purposes
-      # these are the base sets
-      DEBUG_dump_set( "src_set",    src_key_set )
-      DEBUG_dump_set( "dst_set",    dst_key_set )
-      # these are the actual categories
-      DEBUG_dump_set( "src_only",   src_only_keys )
-      DEBUG_dump_set( "intersect",  intersect_keys )
-      DEBUG_dump_set( "dst_only",   dst_only_keys )
-
-      # create DiffObj instances for orphans and add them to the diff_set
-      self.__copy_children( src_obj, src_only_keys, lambda obj: DiffObj( obj,  None ) )
-      self.__copy_children( dst_obj, dst_only_keys, lambda obj: DiffObj( None, obj ) )
-
-      for name in intersect_keys:
-
-         src = src_obj.entries[ name ]
-         dst = dst_obj.entries[ name ]
-
-         diff_obj = self.__compare( src, dst )
-
-         self.diff_set.add_entry( diff_obj );
-
-         if src.isdir() and dst.isdir():
-            self.dir_queue.append( diff_obj )
-
-      if src.isdir():
-         src.reset()
-
-      if dst.isdir():
-         dst.reset()
-
-
-   def __copy_children( self, from_dir, names, mk_diff_fn ):
-
-      for name in names:
-         # get the source object
-         obj = from_dir.entries[ name ]
-         # create a diff entry for it
-         diff_obj = mk_diff_fn( obj );
-         # and adde it to the result
-         self.diff_set.add_entry( diff_obj )
-
-
-# -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
-
 # this class identifies two corresponding BaseObj objects
 
 class DiffObj( RootObj ):
@@ -494,6 +351,209 @@ DEBUG: DUMPING CATEGORY
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
+# this is the main "application" class
+
+class DiffScanner( RootObj ):
+
+   def __init__( self, src_input, dst_input, preserve = False ):
+
+      assert isinstance( src_input, basestring )
+      assert isinstance( dst_input, basestring )
+
+      self.src_input = src_input
+      self.src       = None         # placeholder
+      self.dst_input = dst_input
+      self.dst       = None         # placeholder
+
+      self.preserve  = preserve     # whether we preserve "same" entries
+
+      self.started   = False
+
+      self.diff_set  = None
+
+      self.dir_queue = list()
+
+
+   def run( self ):
+
+      # disallow reuse of an object
+      assert not self.started
+
+      self.src = mk_entry( self.src_input )
+      self.dst = mk_entry( self.dst_input )
+
+      diff_obj = self.__compare( self.src, self.dst )
+
+      # TODO: this needs to be refactored so that the scan is not recursive
+
+      if self.dst.isdir() and self.src.isdir():
+
+         self.diff_set = DiffSet()
+         self.__compare_children( self.src, self.dst )
+
+      while len( self.dir_queue ):
+
+         diff_obj = self.dir_queue.pop(0)
+         self.__compare_children( *diff_obj.get_objs() )
+
+      # TODO: this needs to be moved to the cmdline processing context
+      self.diff_set.show()
+
+
+   def __compare( self, src, dst ):
+
+      DEBUG_emit_compare_banner( src, dst )
+
+      if dst.get_spec() == src.get_spec():
+         print "ERROR: comparing an object to itself"
+         sys.exit()
+
+      if src.ftype != dst.ftype:
+
+         diff_obj = DiffObj( src, dst )
+         diff_obj.add_field( "ftype" )
+
+         # print "\nDEBUG: diff_object category: %s" % diff_obj.get_category()
+
+         return diff_obj   # <<<--- EARLY EXIT
+
+      # at this point we know the ftypes are the same, so we can use either one
+      ftype = dst.ftype
+      # get the class object associated with this file type
+      dentry_class = get_class( ftype )
+      # get the static comparison function
+      compare_fn = dentry_class.compare
+
+      # do the comparison and get the diff object
+      diff_obj = compare_fn( src, dst )
+
+      # print "\nDEBUG: diff_object category: %s" % diff_obj.get_category()
+
+      return diff_obj
+
+
+   def __compare_children( self, src_obj, dst_obj ):
+
+      assert src_obj.isdir()
+      assert dst_obj.isdir()
+
+      src_obj.scan()
+      dst_obj.scan()
+
+      # get the keys (i.e.: the names) of the entries from both dst and src
+      src_key_set    = set( src_obj.get_child_keys() )
+      dst_key_set    = set( dst_obj.get_child_keys() )
+      # find the intersection, i.e.: the entry names that appear in both the dst and src
+      intersect_keys = dst_key_set.intersection( src_key_set )
+      # now subtract out the intersection to get what's unique in both
+      src_only_keys  = src_key_set - intersect_keys
+      dst_only_keys  = dst_key_set - intersect_keys
+
+      # dump the sets for debugging purposes
+      # these are the base sets
+      DEBUG_dump_set( "src_set",    src_key_set )
+      DEBUG_dump_set( "dst_set",    dst_key_set )
+      # these are the actual categories
+      DEBUG_dump_set( "src_only",   src_only_keys )
+      DEBUG_dump_set( "intersect",  intersect_keys )
+      DEBUG_dump_set( "dst_only",   dst_only_keys )
+
+      # create DiffObj instances for orphans and add them to the diff_set
+      self.__copy_children( src_obj, src_only_keys, lambda obj: DiffObj( obj,  None ) )
+      self.__copy_children( dst_obj, dst_only_keys, lambda obj: DiffObj( None, obj ) )
+
+      for name in intersect_keys:
+
+         src = src_obj.entries[ name ]
+         dst = dst_obj.entries[ name ]
+
+         diff_obj = self.__compare( src, dst )
+
+         self.diff_set.add_entry( diff_obj );
+
+         if src.isdir() and dst.isdir():
+            self.dir_queue.append( diff_obj )
+
+      if src.isdir():
+         src.reset()
+
+      if dst.isdir():
+         dst.reset()
+
+
+   def __copy_children( self, from_dir, names, mk_diff_fn ):
+
+      for name in names:
+         # get the source object
+         obj = from_dir.entries[ name ]
+         # create a diff entry for it
+         diff_obj = mk_diff_fn( obj );
+         # and adde it to the result
+         self.diff_set.add_entry( diff_obj )
+
+
+# -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+class ListScanner( RootObj ):
+
+   def __init__( self, inputs ):
+
+      self.inputs   = inputs
+
+      self.objs      = dict()
+      self.dir_queue = list()
+
+
+   def run( self ):
+
+      # step 1 - iterate the inputs and create objects for each
+
+      for file_spec in self.inputs:
+
+         # split this input to get the root and name values
+         root = os.path.dirname( file_spec )
+         name = os.path.basename( file_spec )
+
+         # make an entry for it
+         obj = mk_entry( root, None, name )
+         # and add it to the dictionary
+         self.objs[ obj.get_relspec() ] = obj
+
+         if obj.isdir():
+            self.dir_queue.append( obj )
+
+      # step 2 - scan the directory queue to scan the tree
+
+      while len( self.dir_queue ):
+
+         obj = self.dir_queue.pop(0)
+         obj.scan()
+
+         if obj.entries:
+
+            entry_names = obj.get_child_keys()
+            for entry_name in entry_names:
+
+               child = obj.entries[ entry_name ]
+
+               self.objs[ child.get_relspec() ] = child
+
+               if child.isdir():
+                  self.dir_queue.append( child )
+
+            obj.reset()
+
+      # step 3 - show the list
+
+      names = self.objs.keys()
+      names.sort()
+
+      for name in names:
+         self.objs[ name ].show()
+
+
+# -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
 # this is the base class for all directory entry objects, i.e.: files, links
 # and directories
 
@@ -563,6 +623,11 @@ class BaseObj( RootObj ):
    def get_relspec( self ):
       assert self.name
       return join_path( self.rel_path, self.name )
+
+   def show( self ):
+
+      print "%8s: %s" % ( self.ftype, self.get_relspec() )
+
 
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -681,6 +746,15 @@ class DirObj( BaseObj ):
             for entry_name in entry_names:
                self.entries[ entry_name ] = self.__mk_entry( entry_name )
 
+   def get_child_keys( self ):
+
+      if self.entries:
+         keys = self.entries.keys()
+         keys.sort()
+         return keys
+
+      return list()
+
    def reset( self ):
 
       if self.scanned:
@@ -695,10 +769,7 @@ class DirObj( BaseObj ):
 
          print "\nDUMP: directory entries for: %s" % self.get_spec()
 
-         keys = self.entries.keys()
-         keys.sort()
-
-         for k in keys:
+         for k in self.get_child_keys():
 
             print "\nDUMP: entry for %s" % k
             print "DUMP: dir(%s) == %s" % ( k, dir( self.entries[k] ) )
@@ -766,54 +837,7 @@ def mk_entry( root, rel_path = None, name = None ):
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
-#  _____ _____ ____ _____    ____ ___  ____  _____
-# |_   _| ____/ ___|_   _|  / ___/ _ \|  _ \| ____|
-#   | | |  _| \___ \ | |   | |  | | | | | | |  _|
-#   | | | |___ ___) || |   | |__| |_| | |_| | |___
-#   |_| |_____|____/ |_|    \____\___/|____/|_____|
-# TAGS: TEST CODE
 
-def dump_obj( obj ):
-
-   print """
--=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
-DEBUG: DUMPING OBJECT '%s'
-""" % obj.get_spec()
-
-   obj.dump()
-
-   if obj.isdir():
-
-      print "\nDEBUG: scanning...\n"
-
-      obj.scan()
-
-      print "\nDEBUG: dumping again...\n"
-
-      obj.dump()
-
-      print "\nDEBUG: recursing...\n"
-
-      for entry_name in obj.entries.keys():
-
-         print "----------\nDEBUG: CHECKING ENTRY '%s'\n" % entry_name
-
-         child = obj.entries[ entry_name ]
-
-         if child.isdir():
-            child.scan()
-            child.dump()
-            print "" # DEBUG:
-
-def dump_objs( args ):
-
-   for file_spec in args:
-
-      obj = mk_entry( file_spec )
-      dump_obj( obj )
-      del obj
-
-# -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
 # top-level run commands, for processing command line modes
 
@@ -847,7 +871,8 @@ def run_list( args = None ):
       print "ERROR: specify one or more things to dump..."
       sys.exit(1)
 
-   dump_objs( args )
+   ls = ListScanner( args )
+   ls.run()
 
 
 def run_diff( args = None ):

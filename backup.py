@@ -15,6 +15,13 @@ import pprint
 
 import argparse
 
+import time
+
+import pwd
+import grp
+
+TIME_FMT='%Y-%m-%d %H:%M:%S'
+
 DEBUG = False
 VERBOSE = True
 
@@ -138,7 +145,29 @@ class RootObj:
       print "\nDUMP: class '%s'\n%s" % ( self.__class__, self )
 
 
-class DirEntryPerms( RootObj ):
+class PermsObj( RootObj ):
+
+   perms = [
+      '---',
+      '--x',
+      '-w-',
+      '-wx',
+      'r--',
+      'r-x',
+      'rw-',
+      'rwx'
+   ]
+
+   sperms = [
+      '---',
+      '--s',
+      '-w-',
+      '-ws',
+      'r--',
+      'r-s',
+      'rw-',
+      'rws'
+   ]
 
    def __init__( self, stat_info ):
       RootObj.__init__( self )
@@ -149,6 +178,37 @@ class DirEntryPerms( RootObj ):
 
    def __eq__( self, other ):
       return self.val == other.val
+
+   def get_rwx( self ):
+
+      v = self.val
+
+      o = v % 8
+      v /= 8
+
+      g = v % 8
+      v /= 8
+
+      u = v % 8
+      v /= 8
+
+      s = v % 8
+
+      rc = ""
+
+      if s & 4:
+         rc += PermsObj.sperms[u]
+      else:
+         rc += PermsObj.perms[u]
+
+      if s & 2:
+         rc += PermsObj.sperms[g]
+      else:
+         rc += PermsObj.perms[g]
+
+      rc += PermsObj.perms[o]
+
+      return rc
 
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -600,11 +660,13 @@ class BaseObj( RootObj ):
       self.root         = root
       self.rel_path     = rel_path
       self.name         = name
+      self.name_desc    = name
       self.ftype        = ftype
+      self.ftype_desc   = '-'
 
       self.stat_info    = get_stat( self.get_spec() )
 
-      self.perm         = DirEntryPerms( self.stat_info )
+      self.perm         = PermsObj( self.stat_info )
       self.uid          = self.stat_info.st_uid
       self.gid          = self.stat_info.st_gid
       self.size         = self.stat_info.st_size
@@ -626,7 +688,20 @@ class BaseObj( RootObj ):
 
    def show( self ):
 
-      print "%8s: %s" % ( self.ftype, self.get_relspec() )
+      print "%4s: %5s/%c%s %4d/%-8s %4d/%-8s %8d %s %-30s %s" % (
+         self.ftype,
+         self.perm,
+         self.ftype_desc,
+         self.perm.get_rwx(),
+         self.uid,
+         pwd.getpwuid( self.uid ).pw_name,
+         self.gid,
+         grp.getgrgid( self.gid ).gr_name,
+         self.size,
+         time.strftime( TIME_FMT, time.localtime( self.mtime )),
+         self.rel_path if self.rel_path else ".",
+         self.name_desc
+         )
 
 
 
@@ -692,6 +767,9 @@ class LinkObj( BaseObj ):
 
       self.link = os.readlink( self.get_spec() )
 
+      self.name_desc    = self.name + ' -> ' + self.link
+      self.ftype_desc   = 'l'
+
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
@@ -719,6 +797,8 @@ class DirObj( BaseObj ):
 
       self.entries      = None
       self.scanned      = False
+
+      self.ftype_desc   = 'l'
 
       # print "DEBUG: dir: %s" % self.__class__
 

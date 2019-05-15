@@ -798,7 +798,7 @@ class DirObj( BaseObj ):
       self.entries      = None
       self.scanned      = False
 
-      self.ftype_desc   = 'l'
+      self.ftype_desc   = 'd'
 
       # print "DEBUG: dir: %s" % self.__class__
 

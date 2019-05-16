@@ -211,6 +211,23 @@ class PermsObj( RootObj ):
       return rc
 
 
+class EpochObj( RootObj ):
+
+   def __init__( self, seconds ):
+
+      self.seconds = seconds
+
+   def __str__( self ):
+      return time.strftime( TIME_FMT, time.localtime( self.seconds ))
+
+   def __int__( self ):
+      return self.seconds
+
+   def __eq__( self, other ):
+      # print "DEBUG: EpochObj.__eq__( %d, %d, %s )" % ( self.seconds, other.seconds, self.seconds == other.seconds )
+      return self.seconds == other.seconds
+
+
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
 # this class identifies two corresponding BaseObj objects
@@ -243,10 +260,19 @@ class DiffObj( RootObj ):
          CAT_TYPE    : self.__show_diff_type,
       }
 
+   def __get_one( self ):
+      if self.src:
+         return self.src
+      assert self.dst
+      return self.dst
+
    def add_field( self, field ):
       self.fields.append( field )
       if field == "ftype":
          self.ftype_mismatch = True
+
+   def has_both( self ):
+      return self.src and self.dst
 
    def has_diffs( self ):
       return len( self.fields )
@@ -272,17 +298,18 @@ class DiffObj( RootObj ):
 
    def get_key( self ):
 
-      if self.src and self.dst:
-
+      if self.has_both():
          assert self.src.rel_path == self.dst.rel_path
          assert self.src.name     == self.dst.name
 
-         return self.src.get_relspec()
+      return self.__get_one().get_relspec()
 
-      if self.src:
-         return self.src.get_relspec()
+   def get_ftype( self ):
 
-      return self.dst.get_relspec()
+      if self.ftype_mismatch:
+         return "----"
+
+      return self.__get_one().ftype
 
    def get_fields( self ):
       return ",".join( self.fields )
@@ -300,7 +327,7 @@ class DiffObj( RootObj ):
 
    @staticmethod
    def __show( obj ):
-      print "%8s: %-40s (%s)" % ( obj.get_category(), obj.get_key(), obj.get_fields() )
+      print "%4s: %4s: %-40s (%s)" % ( obj.get_category(), obj.get_ftype(), obj.get_key(), obj.get_fields() )
 
    def __show_same( self ):
       self.__show( self )
@@ -381,7 +408,6 @@ class DiffSet( RootObj ):
       for key in keys:
          diff_obj = self.all[ key ]
          diff_obj.show()
-
 
 
    def dump( self ):
@@ -558,10 +584,26 @@ class ListScanner( RootObj ):
 
    def __init__( self, inputs ):
 
-      self.inputs   = inputs
+      self.inputs       = inputs
 
-      self.objs      = dict()
-      self.dir_queue = list()
+      self.objs         = dict()
+      self.dir_queue    = list()
+
+      self.max_rel_path  = 1
+
+
+   def add_obj( self, obj ):
+
+      # latch the longest rel_path length to format the column correctly
+      if obj.rel_path:
+         # print "DEBUG: %d, %s, %d" % (self.max_rel_path, obj.rel_path, len( obj.rel_path ) )
+         self.max_rel_path  = max( self.max_rel_path, len( obj.rel_path ) )
+
+      # add it to the dictionary
+      self.objs[ obj.get_spec() ] = obj
+      # if it's a directory, add it to the scan queue
+      if obj.isdir():
+         self.dir_queue.append( obj )
 
 
    def run( self ):
@@ -576,11 +618,8 @@ class ListScanner( RootObj ):
 
          # make an entry for it
          obj = mk_entry( root, None, name )
-         # and add it to the dictionary
-         self.objs[ obj.get_relspec() ] = obj
-
-         if obj.isdir():
-            self.dir_queue.append( obj )
+         # and add the object to the list
+         self.add_obj( obj )
 
       # step 2 - scan the directory queue to scan the tree
 
@@ -594,22 +633,25 @@ class ListScanner( RootObj ):
             entry_names = obj.get_child_keys()
             for entry_name in entry_names:
 
+               # get the child object
                child = obj.entries[ entry_name ]
 
-               self.objs[ child.get_relspec() ] = child
+               # and add it to the list
+               self.add_obj( child )
 
-               if child.isdir():
-                  self.dir_queue.append( child )
-
+            # this normally cleans up child objects, but it's superfluous as
+            # we're keeping them all in the objs dictionary
             obj.reset()
 
       # step 3 - show the list
+
+      # print "DEBUG: size=%d" % self.max_rel_path
 
       names = self.objs.keys()
       names.sort()
 
       for name in names:
-         self.objs[ name ].show()
+         self.objs[ name ].show( self.max_rel_path )
 
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -671,9 +713,9 @@ class BaseObj( RootObj ):
       self.gid          = self.stat_info.st_gid
       self.size         = self.stat_info.st_size
 
-      self.ctime        = self.stat_info.st_ctime  # meta-data changed (created?)
-      self.mtime        = self.stat_info.st_mtime  # modified
-      self.atime        = self.stat_info.st_atime  # accessed
+      self.ctime        = EpochObj( self.stat_info.st_ctime ) # meta-data changed (created?)
+      self.mtime        = EpochObj( self.stat_info.st_mtime ) # modified
+      self.atime        = EpochObj( self.stat_info.st_atime ) # accessed
 
    def isdir( self ):
       return False
@@ -686,23 +728,25 @@ class BaseObj( RootObj ):
       assert self.name
       return join_path( self.rel_path, self.name )
 
-   def show( self ):
+   def get_rwx( self ):
+      return self.ftype_desc + self.perm.get_rwx()
 
-      print "%4s: %5s/%c%s %4d/%-8s %4d/%-8s %8d %s %-30s %s" % (
+   def show( self, rel_path_size ):
+
+      print "%4s: %5s/%s %4d/%-8s %4d/%-8s %8d %s %-*s %s" % (
          self.ftype,
          self.perm,
-         self.ftype_desc,
-         self.perm.get_rwx(),
+         self.get_rwx(),
          self.uid,
          pwd.getpwuid( self.uid ).pw_name,
          self.gid,
          grp.getgrgid( self.gid ).gr_name,
          self.size,
-         time.strftime( TIME_FMT, time.localtime( self.mtime )),
+         self.mtime,
+         rel_path_size,
          self.rel_path if self.rel_path else ".",
          self.name_desc
          )
-
 
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-

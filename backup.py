@@ -7,6 +7,7 @@
 import sys
 import os
 import stat
+import hashlib
 
 import collections
 
@@ -24,6 +25,8 @@ TIME_FMT='%Y-%m-%d %H:%M:%S'
 
 DEBUG = False
 VERBOSE = True
+
+HASH_ENABLED = False
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
@@ -226,6 +229,97 @@ class EpochObj( RootObj ):
    def __eq__( self, other ):
       # print "DEBUG: EpochObj.__eq__( %d, %d, %s )" % ( self.seconds, other.seconds, self.seconds == other.seconds )
       return self.seconds == other.seconds
+
+
+class GidObj( RootObj ):
+
+   def __init__( self, gid = None, name = None ):
+      assert not gid or not name # can't have both
+      assert gid or name         # must have one
+
+      if gid:
+         self.grp_obj = grp.getgrgid( gid )
+      else:
+         self.grp_obj = grp.getgrnam( name )
+
+   def __eq__( self, other ):
+      return self.grp_obj.gr_gid == other.grp_obj.gr_gid
+
+   def __str__( self ):
+      return self.grp_obj.gr_name
+
+   def __int__( self ):
+      return self.grp_obj.gr_gid
+
+
+class UidObj( RootObj ):
+
+   def __init__( self, uid = None, name = None ):
+      assert not uid or not name # can't have both
+      assert uid or name         # must have one
+
+      if uid:
+         self.pwd_obj = pwd.getpwuid( uid )
+      else:
+         self.pwd_obj = pwd.getpwnam( name )
+
+   def __eq__( self, other ):
+      # print "DEBUG: EpochObj.__eq__( %d, %d, %s )" % ( self.seconds, other.seconds, self.seconds == other.seconds )
+      return self.pwd_obj.pw_gid == other.pwd_obj.pw_gid
+
+   def __str__( self ):
+      return self.pwd_obj.pw_name
+
+   def __int__( self ):
+      return self.pwd_obj.pw_gid
+
+
+class HashMode( RootObj ):
+
+   def __init__( self, name, hash_obj ):
+
+      hash_temp = hash_obj()
+      hash_temp.update( "test data for computing hash lengths" )
+
+      self.hash_name = name
+      self.hash_obj  = hash_obj
+      self.hash_len  = len( hash_temp.hexdigest() )
+
+      del hash_temp
+
+
+   def get( self ):
+      return self.hash_obj()
+
+
+class HashSum( RootObj ):
+
+   algorithms = {
+      "md5"       : HashMode( "md5",    hashlib.md5      ),
+      "sha1"      : HashMode( "sha1",   hashlib.sha1     ),
+      "sha224"    : HashMode( "sha224", hashlib.sha224   ),
+      "sha256"    : HashMode( "sha256", hashlib.sha256   ),
+      "sha384"    : HashMode( "sha384", hashlib.sha384   ),
+      "sha512"    : HashMode( "sha512", hashlib.sha512   ),
+   }
+
+   def __init__( self, file_spec, hash_obj = None ):
+
+      if hash_obj:
+         self.hash_obj = hash_obj()
+      else:
+         self.hash_obj = HashSum.algorithms[ "md5" ].get()
+
+      with open( file_spec, "rb") as fd:
+         while True:
+            data = fd.read( 4096 )
+            if not data:
+               break
+            self.hash_obj.update( data )
+
+   def __str__( self ):
+      return self.hash_obj.hexdigest()
+
 
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -709,13 +803,15 @@ class BaseObj( RootObj ):
       self.stat_info    = get_stat( self.get_spec() )
 
       self.perm         = PermsObj( self.stat_info )
-      self.uid          = self.stat_info.st_uid
-      self.gid          = self.stat_info.st_gid
+      self.uid          = UidObj( self.stat_info.st_uid )
+      self.gid          = GidObj( self.stat_info.st_gid )
       self.size         = self.stat_info.st_size
 
       self.ctime        = EpochObj( self.stat_info.st_ctime ) # meta-data changed (created?)
       self.mtime        = EpochObj( self.stat_info.st_mtime ) # modified
       self.atime        = EpochObj( self.stat_info.st_atime ) # accessed
+
+      self.hash_sum     = None
 
    def isdir( self ):
       return False
@@ -733,20 +829,39 @@ class BaseObj( RootObj ):
 
    def show( self, rel_path_size ):
 
-      print "%4s: %5s/%s %4d/%-8s %4d/%-8s %8d %s %-*s %s" % (
-         self.ftype,
-         self.perm,
-         self.get_rwx(),
-         self.uid,
-         pwd.getpwuid( self.uid ).pw_name,
-         self.gid,
-         grp.getgrgid( self.gid ).gr_name,
-         self.size,
-         self.mtime,
-         rel_path_size,
-         self.rel_path if self.rel_path else ".",
-         self.name_desc
-         )
+      if HASH_ENABLED:
+
+         print "%4s: %5s/%s %4d/%-8s %4d/%-8s %8d %s %-*s %-*s %s" % (
+            self.ftype,
+            self.perm,
+            self.get_rwx(),
+            self.uid,
+            self.uid,
+            self.gid,
+            self.gid,
+            self.size,
+            self.mtime,
+            HASH_LEN,
+            self.hash_sum if self.hash_sum else '-',
+            rel_path_size,
+            self.rel_path if self.rel_path else ".",
+            self.name_desc
+            )
+      else:
+         print "%4s: %5s/%s %4d/%-8s %4d/%-8s %8d %s %-*s %s" % (
+            self.ftype,
+            self.perm,
+            self.get_rwx(),
+            self.uid,
+            self.uid,
+            self.gid,
+            self.gid,
+            self.size,
+            self.mtime,
+            rel_path_size,
+            self.rel_path if self.rel_path else ".",
+            self.name_desc
+            )
 
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -754,8 +869,6 @@ class BaseObj( RootObj ):
 # file object
 
 class FileObj( BaseObj ):
-
-   # TODO: setup comparison fields and related
 
    compare_fields = (
       "name",           # TODO: this should be controlled by the check_name parameter
@@ -776,8 +889,8 @@ class FileObj( BaseObj ):
    def __init__( self, root, rel_path, name ):
       BaseObj.__init__( self, root, rel_path, name, IS_FILE )
 
-      # TODO: get the file size and other relevant details and add them
-      # as fields for the compare_field function
+      if HASH_ENABLED:
+         self.hash_sum = HashSum( self.get_spec() )
 
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -785,8 +898,6 @@ class FileObj( BaseObj ):
 # link object
 
 class LinkObj( BaseObj ):
-
-   # TODO: setup comparison fields and related
 
    compare_fields = (
       "name",           # TODO: this should be controlled by the check_name parameter
@@ -806,8 +917,6 @@ class LinkObj( BaseObj ):
 
    def __init__( self, root, rel_path, name ):
       BaseObj.__init__( self, root, rel_path, name, IS_LINK )
-
-      # TODO: read the link and add a "points_to" member...
 
       self.link = os.readlink( self.get_spec() )
 
@@ -1039,6 +1148,8 @@ if __name__ == "__main__":
    mode.add_argument( "-l", "--list", action="store_const", const="LIST", dest="mode", help="enables list mode" )
    mode.add_argument( "-t", "--test", action="store_const", const="TEST", dest="mode", help="enables bench testing" )
 
+   parser.add_argument( "--md5sum",   action="store_const", const='MD5SUM', dest="hash_mode", default=None, help="calc/compare md5sum values" )
+
    parser.add_argument( "--debug",    action="store_true",  default=False,             help="dump debugging information" )
    parser.add_argument( "--verbose",  action="store_true",  default=False,             help="include extra information, where applicable" )
 
@@ -1048,6 +1159,11 @@ if __name__ == "__main__":
 
    DEBUG    = args.debug
    VERBOSE  = args.verbose
+
+   if args.hash_mode:
+      HASH_ENABLED   = True
+      HASH_MODE      = args.hash_mode  # TODO: need to enhance to select the hash algorithm
+      HASH_LEN       = 32              # TODO: need to set size, based on hash algo
 
    if VERBOSE:
       print "mode=%s"      % args.mode

@@ -276,6 +276,14 @@ class UidObj( RootObj ):
 
 class HashMode( RootObj ):
 
+   @staticmethod
+   def get_len( hash_name ):
+      return HASH_MODES[ hash_name ].hash_len
+
+   @staticmethod
+   def get_mode( hash_name ):
+      return HASH_MODES[ hash_name ]
+
    def __init__( self, name, hash_obj ):
 
       hash_temp = hash_obj()
@@ -287,39 +295,47 @@ class HashMode( RootObj ):
 
       del hash_temp
 
-
-   def get( self ):
+   def get_sum( self ):
       return self.hash_obj()
+
+
+HASH_MODES = {
+   "md5"       : HashMode( "md5",    hashlib.md5      ),
+   "sha1"      : HashMode( "sha1",   hashlib.sha1     ),
+   "sha224"    : HashMode( "sha224", hashlib.sha224   ),
+   "sha256"    : HashMode( "sha256", hashlib.sha256   ),
+   "sha384"    : HashMode( "sha384", hashlib.sha384   ),
+   "sha512"    : HashMode( "sha512", hashlib.sha512   ),
+}
 
 
 class HashSum( RootObj ):
 
-   algorithms = {
-      "md5"       : HashMode( "md5",    hashlib.md5      ),
-      "sha1"      : HashMode( "sha1",   hashlib.sha1     ),
-      "sha224"    : HashMode( "sha224", hashlib.sha224   ),
-      "sha256"    : HashMode( "sha256", hashlib.sha256   ),
-      "sha384"    : HashMode( "sha384", hashlib.sha384   ),
-      "sha512"    : HashMode( "sha512", hashlib.sha512   ),
-   }
+   def __init__( self, file_spec, hash_name = None ):
 
-   def __init__( self, file_spec, hash_obj = None ):
-
-      if hash_obj:
-         self.hash_obj = hash_obj()
+      if hash_name:
+         self.hash_name = hash_name
       else:
-         self.hash_obj = HashSum.algorithms[ "md5" ].get()
+         self.hash_name = HASH_NAME
 
+      # this defines the algorithm
+      self.hash_mode    = HashMode.get_mode( self.hash_name )
+      # this calculates the sum
+      self.hash_sum     = self.hash_mode.get_sum()
+
+      # read the file and calculate the sum
       with open( file_spec, "rb") as fd:
          while True:
             data = fd.read( 4096 )
             if not data:
                break
-            self.hash_obj.update( data )
+            self.hash_sum.update( data )
 
    def __str__( self ):
-      return self.hash_obj.hexdigest()
+      return self.hash_sum.hexdigest()
 
+   def __int__( self ):
+      return len( self.hash_sum.hexdigest() )
 
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -1144,14 +1160,20 @@ if __name__ == "__main__":
    parser = argparse.ArgumentParser( "directory scanning, comparison and backup" )
 
    mode = parser.add_mutually_exclusive_group( required=True )
-   mode.add_argument( "-d", "--diff", action="store_const", const="DIFF", dest="mode", help="enables differencing mode"  )
-   mode.add_argument( "-l", "--list", action="store_const", const="LIST", dest="mode", help="enables list mode" )
-   mode.add_argument( "-t", "--test", action="store_const", const="TEST", dest="mode", help="enables bench testing" )
+   mode.add_argument( "-d", "--diff",  action="store_const", const="DIFF",    dest="mode",       help="enables differencing mode"  )
+   mode.add_argument( "-l", "--list",  action="store_const", const="LIST",    dest="mode",       help="enables list mode" )
+   mode.add_argument( "-t", "--test",  action="store_const", const="TEST",    dest="mode",       help="enables bench testing" )
 
-   parser.add_argument( "--md5sum",   action="store_const", const='MD5SUM', dest="hash_mode", default=None, help="calc/compare md5sum values" )
+   hash_name = parser.add_mutually_exclusive_group()
+   hash_name.add_argument( "--md5",    action="store_const", const="md5",     dest="hash_name",  help="calc/compare md5 values" )
+   hash_name.add_argument( "--sha1",   action="store_const", const="sha1",    dest="hash_name",  help="calc/compare sha1 values" )
+   hash_name.add_argument( "--sha224", action="store_const", const="sha224",  dest="hash_name",  help="calc/compare sha224 values" )
+   hash_name.add_argument( "--sha256", action="store_const", const="sha256",  dest="hash_name",  help="calc/compare sha256 values" )
+   hash_name.add_argument( "--sha384", action="store_const", const="sha384",  dest="hash_name",  help="calc/compare sha384 values" )
+   hash_name.add_argument( "--sha512", action="store_const", const="sha512",  dest="hash_name",  help="calc/compare sha512 values" )
 
-   parser.add_argument( "--debug",    action="store_true",  default=False,             help="dump debugging information" )
-   parser.add_argument( "--verbose",  action="store_true",  default=False,             help="include extra information, where applicable" )
+   parser.add_argument( "--debug",     action="store_true",  default=False,                      help="dump debugging information" )
+   parser.add_argument( "--verbose",   action="store_true",  default=False,                      help="include extra information, where applicable" )
 
    parser.add_argument( "scopes", nargs=argparse.REMAINDER )
 
@@ -1160,10 +1182,11 @@ if __name__ == "__main__":
    DEBUG    = args.debug
    VERBOSE  = args.verbose
 
-   if args.hash_mode:
+   if args.hash_name:
       HASH_ENABLED   = True
-      HASH_MODE      = args.hash_mode  # TODO: need to enhance to select the hash algorithm
-      HASH_LEN       = 32              # TODO: need to set size, based on hash algo
+      HASH_NAME      = args.hash_name
+      HASH_MODE      = HashMode.get_mode( args.hash_name )
+      HASH_LEN       = HASH_MODE.hash_len
 
    if VERBOSE:
       print "mode=%s"      % args.mode

@@ -1,0 +1,10 @@
+#! /usr/bin/zsh
+
+# copy the base file over
+cp tags-python2.7 tags
+
+# and append the local tags to the file
+ctags --append --verbose --totals -L files
+
+
+# vim: syntax=sh

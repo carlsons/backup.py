@@ -26,7 +26,6 @@ TIME_FMT='%Y-%m-%d %H:%M:%S'
 DEBUG = False
 VERBOSE = True
 
-HASH_ENABLED = False
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
@@ -311,15 +310,12 @@ HASH_MODES = {
 
 class HashSum( RootObj ):
 
-   def __init__( self, file_spec, hash_name = None ):
+   def __init__( self, file_spec, hash_mode ):
 
-      if hash_name:
-         self.hash_name = hash_name
-      else:
-         self.hash_name = HASH_NAME
+      assert hash_mode
 
       # this defines the algorithm
-      self.hash_mode    = HashMode.get_mode( self.hash_name )
+      self.hash_mode    = hash_mode
       # this calculates the sum
       self.hash_sum     = self.hash_mode.get_sum()
 
@@ -336,6 +332,9 @@ class HashSum( RootObj ):
 
    def __int__( self ):
       return len( self.hash_sum.hexdigest() )
+
+   def __eq__( self, other ):
+      return self.hash_sum.hexdigest() == other.hash_sum.hexdigest()
 
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -551,7 +550,7 @@ DEBUG: DUMPING CATEGORY
 
 class DiffScanner( RootObj ):
 
-   def __init__( self, src_input, dst_input, preserve = False ):
+   def __init__( self, src_input, dst_input, hash_mode, preserve = False ):
 
       assert isinstance( src_input, basestring )
       assert isinstance( dst_input, basestring )
@@ -560,13 +559,11 @@ class DiffScanner( RootObj ):
       self.src       = None         # placeholder
       self.dst_input = dst_input
       self.dst       = None         # placeholder
-
+      self.hash_mode = hash_mode
       self.preserve  = preserve     # whether we preserve "same" entries
 
       self.started   = False
-
       self.diff_set  = None
-
       self.dir_queue = list()
 
 
@@ -575,8 +572,8 @@ class DiffScanner( RootObj ):
       # disallow reuse of an object
       assert not self.started
 
-      self.src = mk_entry( self.src_input )
-      self.dst = mk_entry( self.dst_input )
+      self.src = mk_entry( self.src_input, hash_mode = self.hash_mode )
+      self.dst = mk_entry( self.dst_input, hash_mode = self.hash_mode )
 
       diff_obj = self.__compare( self.src, self.dst )
 
@@ -692,9 +689,10 @@ class DiffScanner( RootObj ):
 
 class ListScanner( RootObj ):
 
-   def __init__( self, inputs ):
+   def __init__( self, inputs, hash_mode ):
 
       self.inputs       = inputs
+      self.hash_mode    = hash_mode
 
       self.objs         = dict()
       self.dir_queue    = list()
@@ -727,7 +725,7 @@ class ListScanner( RootObj ):
          name = os.path.basename( file_spec )
 
          # make an entry for it
-         obj = mk_entry( root, None, name )
+         obj = mk_entry( root, None, name, self.hash_mode )
          # and add the object to the list
          self.add_obj( obj )
 
@@ -788,7 +786,7 @@ class BaseObj( RootObj ):
       return is_equal
 
    @staticmethod
-   def compare_fields( src, dst, fields, check_name = False ):
+   def compare_fields( src, dst, fields, check_name = False, check_hash = False ):
 
       assert src.__class__ == dst.__class__
       assert issubclass( src.__class__, BaseObj )
@@ -803,9 +801,14 @@ class BaseObj( RootObj ):
          if not BaseObj.compare_field( src, dst, field ):
             diff_obj.add_field( field )
 
+      if check_hash:
+         assert src.hash_mode == dst.hash_mode
+         if not BaseObj.compare_field( src, dst, "hash_sum" ):
+            diff_obj.add_field( "hash_sum" )
+
       return diff_obj
 
-   def __init__( self, root, rel_path, name, ftype ):
+   def __init__( self, root, rel_path, name, ftype, hash_mode ):
 
       RootObj.__init__( self )
 
@@ -815,6 +818,7 @@ class BaseObj( RootObj ):
       self.name_desc    = name
       self.ftype        = ftype
       self.ftype_desc   = '-'
+      self.hash_mode    = hash_mode
 
       self.stat_info    = get_stat( self.get_spec() )
 
@@ -832,6 +836,12 @@ class BaseObj( RootObj ):
    def isdir( self ):
       return False
 
+   def isfile( self ):
+      return False
+
+   def has_hash( self ):
+      return self.hash_mode is not None
+
    def get_spec( self ):
       assert self.root
       return join_path( self.root, self.rel_path, self.name )
@@ -845,7 +855,7 @@ class BaseObj( RootObj ):
 
    def show( self, rel_path_size ):
 
-      if HASH_ENABLED:
+      if self.hash_mode:
 
          print "%4s: %5s/%s %4d/%-8s %4d/%-8s %8d %s %-*s %-*s %s" % (
             self.ftype,
@@ -857,7 +867,7 @@ class BaseObj( RootObj ):
             self.gid,
             self.size,
             self.mtime,
-            HASH_LEN,
+            self.hash_mode.hash_len,
             self.hash_sum if self.hash_sum else '-',
             rel_path_size,
             self.rel_path if self.rel_path else ".",
@@ -886,7 +896,7 @@ class BaseObj( RootObj ):
 
 class FileObj( BaseObj ):
 
-   compare_fields = (
+   fields = (
       "name",           # TODO: this should be controlled by the check_name parameter
       "ftype",
       "perm",
@@ -899,14 +909,17 @@ class FileObj( BaseObj ):
    @staticmethod
    def compare( src, dst, check_name = False ):
 
-      diff_obj = BaseObj.compare_fields( src, dst, FileObj.compare_fields, check_name )
+      diff_obj = BaseObj.compare_fields( src, dst, FileObj.fields, check_name, check_hash = src.has_hash() )
       return diff_obj
 
-   def __init__( self, root, rel_path, name ):
-      BaseObj.__init__( self, root, rel_path, name, IS_FILE )
+   def __init__( self, root, rel_path, name, hash_mode ):
+      BaseObj.__init__( self, root, rel_path, name, IS_FILE, hash_mode )
 
-      if HASH_ENABLED:
-         self.hash_sum = HashSum( self.get_spec() )
+      if hash_mode:
+         self.hash_sum = HashSum( self.get_spec(), hash_mode )
+
+   def isfile( self ):
+      return True
 
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -915,7 +928,7 @@ class FileObj( BaseObj ):
 
 class LinkObj( BaseObj ):
 
-   compare_fields = (
+   fields = (
       "name",           # TODO: this should be controlled by the check_name parameter
       "ftype",
       "uid",
@@ -928,11 +941,11 @@ class LinkObj( BaseObj ):
    @staticmethod
    def compare( src, dst, check_name = False ):
 
-      diff_obj = BaseObj.compare_fields( src, dst, LinkObj.compare_fields, check_name )
+      diff_obj = BaseObj.compare_fields( src, dst, LinkObj.fields, check_name )
       return diff_obj
 
-   def __init__( self, root, rel_path, name ):
-      BaseObj.__init__( self, root, rel_path, name, IS_LINK )
+   def __init__( self, root, rel_path, name, hash_mode ):
+      BaseObj.__init__( self, root, rel_path, name, IS_LINK, hash_mode )
 
       self.link = os.readlink( self.get_spec() )
 
@@ -946,7 +959,7 @@ class LinkObj( BaseObj ):
 
 class DirObj( BaseObj ):
 
-   compare_fields = (
+   fields = (
       "name",           # TODO: this should be controlled by the check_name parameter
       "ftype",
       "perm",
@@ -955,14 +968,14 @@ class DirObj( BaseObj ):
    @staticmethod
    def compare( src, dst, check_name = False ):
 
-      diff_obj = BaseObj.compare_fields( src, dst, DirObj.compare_fields, check_name )
+      diff_obj = BaseObj.compare_fields( src, dst, DirObj.fields, check_name )
       return diff_obj
 
-   def __init__( self, root, rel_path = None, name = None ):
+   def __init__( self, root, rel_path = None, name = None, hash_mode = None ):
 
       root              = os.path.abspath( root )
 
-      BaseObj.__init__( self, root, rel_path, name, IS_DIR )
+      BaseObj.__init__( self, root, rel_path, name, IS_DIR, hash_mode )
 
       self.entries      = None
       self.scanned      = False
@@ -975,7 +988,7 @@ class DirObj( BaseObj ):
       # get the relative path of the entry
       rel_path = join_path( self.rel_path, self.name )
       # and make an entry for it
-      return mk_entry( self.root, rel_path, entry_name )
+      return mk_entry( self.root, rel_path, entry_name, self.hash_mode )
 
    def isdir( self ):
       return True
@@ -1063,7 +1076,7 @@ def join_path( *args ):
 
    return file_spec
 
-def mk_entry( root, rel_path = None, name = None ):
+def mk_entry( root, rel_path = None, name = None, hash_mode = None ):
 
    # canonicalize the root path
    abs_root    = os.path.abspath( root )
@@ -1076,7 +1089,7 @@ def mk_entry( root, rel_path = None, name = None ):
 
    if DIR_ENTRY_CLASSES.has_key( ftype ):
       dentry_class   = DIR_ENTRY_CLASSES[ ftype ]
-      return dentry_class( abs_root, rel_path, name )
+      return dentry_class( abs_root, rel_path, name, hash_mode )
 
    raise AssertionError
 
@@ -1090,7 +1103,7 @@ def mk_entry( root, rel_path = None, name = None ):
 
 # top-level run commands, for processing command line modes
 
-def run_test( args = None ):
+def run_test( args = None, hash_mode = None ):
 
    if not args:
       args = sys.argv[1:]
@@ -1112,7 +1125,7 @@ def run_test( args = None ):
    ds.dump()
 
 
-def run_list( args = None ):
+def run_list( args = None, hash_mode = None ):
 
    if not args:
       args = sys.argv[1:]
@@ -1120,11 +1133,11 @@ def run_list( args = None ):
       print "ERROR: specify one or more things to dump..."
       sys.exit(1)
 
-   ls = ListScanner( args )
+   ls = ListScanner( args, hash_mode )
    ls.run()
 
 
-def run_diff( args = None ):
+def run_diff( args = None, hash_mode = None ):
 
    if not args:
       args = sys.argv[1:]
@@ -1135,7 +1148,7 @@ def run_diff( args = None ):
    # get the args
    src, dst = args
    # and call the comparison function
-   ds = DiffScanner( src, dst )
+   ds = DiffScanner( src, dst, hash_mode )
    ds.run()
 
 COMMANDS = {
@@ -1182,11 +1195,9 @@ if __name__ == "__main__":
    DEBUG    = args.debug
    VERBOSE  = args.verbose
 
+   hash_mode = None
    if args.hash_name:
-      HASH_ENABLED   = True
-      HASH_NAME      = args.hash_name
-      HASH_MODE      = HashMode.get_mode( args.hash_name )
-      HASH_LEN       = HASH_MODE.hash_len
+      hash_mode      = HashMode.get_mode( args.hash_name )
 
    if VERBOSE:
       print "mode=%s"      % args.mode
@@ -1195,7 +1206,7 @@ if __name__ == "__main__":
       print "scopes=%s"    % args.scopes
 
    fn = COMMANDS[ args.mode ]
-   fn( args.scopes )
+   fn( args.scopes, hash_mode )
 
 
 # vim: syntax=python si

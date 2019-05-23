@@ -336,6 +336,9 @@ class HashSum( RootObj ):
    def __eq__( self, other ):
       return self.hash_sum.hexdigest() == other.hash_sum.hexdigest()
 
+   def get( self ):
+      return self.hash_sum.hexdigest()
+
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
@@ -694,7 +697,8 @@ class ListScanner( RootObj ):
       self.inputs       = inputs
       self.hash_mode    = hash_mode
 
-      self.objs         = dict()
+      self.objs_idx     = dict()
+      self.hash_idx     = dict()
       self.dir_queue    = list()
 
       self.max_rel_path  = 1
@@ -707,14 +711,28 @@ class ListScanner( RootObj ):
          # print "DEBUG: %d, %s, %d" % (self.max_rel_path, obj.rel_path, len( obj.rel_path ) )
          self.max_rel_path  = max( self.max_rel_path, len( obj.rel_path ) )
 
-      # add it to the dictionary
-      self.objs[ obj.get_spec() ] = obj
+      objs_key = obj.get_spec() 
+
+      # add it to the name index
+      assert not self.objs_idx.has_key( objs_key )
+      self.objs_idx[ objs_key ] = obj
+
+      # add it to the hash index
+      if obj.hash_sum:
+
+         hash_key = obj.hash_sum.get() 
+
+         if not self.hash_idx.has_key( hash_key ):
+            self.hash_idx[ hash_key ] = list()
+
+         self.hash_idx[ hash_key ].append( obj )
+
       # if it's a directory, add it to the scan queue
       if obj.isdir():
          self.dir_queue.append( obj )
 
 
-   def run( self ):
+   def run( self, fn = None ):
 
       # step 1 - iterate the inputs and create objects for each
 
@@ -748,18 +766,39 @@ class ListScanner( RootObj ):
                self.add_obj( child )
 
             # this normally cleans up child objects, but it's superfluous as
-            # we're keeping them all in the objs dictionary
+            # we're keeping them all in the objs_idx dictionary anyways
             obj.reset()
 
-      # step 3 - show the list
+      if fn:
+         fn( self )
 
-      # print "DEBUG: size=%d" % self.max_rel_path
 
-      names = self.objs.keys()
+   def show_all( self ):
+
+      names = self.objs_idx.keys()
       names.sort()
 
       for name in names:
-         self.objs[ name ].show( self.max_rel_path )
+         self.objs_idx[ name ].show( self.max_rel_path )
+
+
+   def show_dups( self ):
+      assert self.hash_mode
+
+      names = self.hash_idx.keys()
+      names.sort()
+
+      for name in names:
+
+         dups_list = self.hash_idx[ name ]
+         assert len( dups_list )
+
+         if len( dups_list ) > 1:
+
+            print "\n%s: %s\n" % ( hash_mode.hash_name, name )
+
+            for obj in dups_list:
+               obj.show( self.max_rel_path, omit_hash = True )
 
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -853,9 +892,9 @@ class BaseObj( RootObj ):
    def get_rwx( self ):
       return self.ftype_desc + self.perm.get_rwx()
 
-   def show( self, rel_path_size ):
+   def show( self, rel_path_size, omit_hash = False ):
 
-      if self.hash_mode:
+      if self.hash_mode and not omit_hash:
 
          print "%4s: %5s/%s %4d/%-8s %4d/%-8s %8d %s %-*s %-*s %s" % (
             self.ftype,
@@ -1100,6 +1139,20 @@ def mk_entry( root, rel_path = None, name = None, hash_mode = None ):
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
 
+# helper function for running the ListScanner, results are emitted by an
+# unbound method
+
+def _run_list( args = None, hash_mode = None, fn = None ):
+
+   if not args:
+      args = sys.argv[1:]
+   if not len( args ):
+      print "ERROR: specify one or more things to dump..."
+      sys.exit(1)
+
+   ls = ListScanner( args, hash_mode )
+   ls.run( fn )
+
 
 # top-level run commands, for processing command line modes
 
@@ -1127,14 +1180,11 @@ def run_test( args = None, hash_mode = None ):
 
 def run_list( args = None, hash_mode = None ):
 
-   if not args:
-      args = sys.argv[1:]
-   if not len( args ):
-      print "ERROR: specify one or more things to dump..."
-      sys.exit(1)
+   _run_list( args, hash_mode, ListScanner.show_all )
 
-   ls = ListScanner( args, hash_mode )
-   ls.run()
+def run_dups( args = None, hash_mode = None ):
+
+   _run_list( args, hash_mode, ListScanner.show_dups )
 
 
 def run_diff( args = None, hash_mode = None ):
@@ -1154,6 +1204,7 @@ def run_diff( args = None, hash_mode = None ):
 COMMANDS = {
    "TEST"   : run_test,
    "LIST"   : run_list,
+   "DUPS"   : run_dups,
    "DIFF"   : run_diff,
 }
 
@@ -1175,6 +1226,7 @@ if __name__ == "__main__":
    mode = parser.add_mutually_exclusive_group( required=True )
    mode.add_argument( "-d", "--diff",  action="store_const", const="DIFF",    dest="mode",       help="enables differencing mode"  )
    mode.add_argument( "-l", "--list",  action="store_const", const="LIST",    dest="mode",       help="enables list mode" )
+   mode.add_argument( "-D", "--dups",  action="store_const", const="DUPS",    dest="mode",       help="enables bench testing" )
    mode.add_argument( "-t", "--test",  action="store_const", const="TEST",    dest="mode",       help="enables bench testing" )
 
    hash_name = parser.add_mutually_exclusive_group()

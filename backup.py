@@ -1251,6 +1251,9 @@ if __name__ == "__main__":
    if args.hash_name:
       hash_mode      = HashMode.get_mode( args.hash_name )
 
+   if args.mode == "DUPS" and not hash_mode:
+      parser.error( "-D|--dups requires a hashing mode" )
+
    if VERBOSE:
       print "mode=%s"      % args.mode
       print "debug=%s"     % args.debug

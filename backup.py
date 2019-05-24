@@ -432,29 +432,32 @@ class DiffObj( RootObj ):
       if self.dst and self.dst.isdir():
          self.dst.scan()
 
-   def show( self ):
+
+   # TODO: this show method needs to be refactored
+
+   def show( self, max_key_len ):
 
       fn = self.show_methods[ self.get_category() ]
-      fn()
+      fn( max_key_len )
 
    @staticmethod
-   def __show( obj ):
-      print "%4s: %4s: %-40s (%s)" % ( obj.get_category(), obj.get_ftype(), obj.get_key(), obj.get_fields() )
+   def __show( obj, max_key_len ):
+      print "%4s: %4s: %-*s (%s)" % ( obj.get_category(), obj.get_ftype(), max_key_len, obj.get_key(), obj.get_fields() )
 
-   def __show_same( self ):
-      self.__show( self )
+   def __show_same( self, max_key_len ):
+      self.__show( self, max_key_len )
 
-   def __show_diff( self ):
-      self.__show( self )
+   def __show_diff( self, max_key_len ):
+      self.__show( self, max_key_len )
 
-   def __show_src_only( self ):
-      self.__show( self )
+   def __show_src_only( self, max_key_len ):
+      self.__show( self, max_key_len )
 
-   def __show_dst_only( self ):
-      self.__show( self )
+   def __show_dst_only( self, max_key_len ):
+      self.__show( self, max_key_len )
 
-   def __show_diff_type( self ):
-      self.__show( self )
+   def __show_diff_type( self, max_key_len ):
+      self.__show( self, max_key_len )
 
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -485,6 +488,8 @@ class DiffSet( RootObj ):
          CAT_TYPE    : self.diff_type,
       }
 
+      self.max_key_len  = 0
+
 
    def add_entry( self, diff_obj ):
 
@@ -504,6 +509,9 @@ class DiffSet( RootObj ):
       # add it to the superset
       self.all[ diff_key ] = diff_obj
 
+      # and latch the max key length (for the show function)
+      self.max_key_len = max( self.max_key_len, len( diff_key ) )
+
    # not currently used
    def __show( self ):
 
@@ -512,14 +520,14 @@ class DiffSet( RootObj ):
          for key in cat.keys():
             print "%8s: %s" % ( cat_name, key )
 
-   def show( self ):
+   def show_all( self ):
 
       keys = self.all.keys()
       keys.sort()
 
       for key in keys:
          diff_obj = self.all[ key ]
-         diff_obj.show()
+         diff_obj.show( self.max_key_len )
 
 
    def dump( self ):
@@ -549,8 +557,6 @@ DEBUG: DUMPING CATEGORY
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
-# this is the main "application" class
-
 class DiffScanner( RootObj ):
 
    def __init__( self, src_input, dst_input, hash_mode, preserve = False ):
@@ -565,22 +571,21 @@ class DiffScanner( RootObj ):
       self.hash_mode = hash_mode
       self.preserve  = preserve     # whether we preserve "same" entries
 
-      self.started   = False
+      self.scanned   = False
       self.diff_set  = None
       self.dir_queue = list()
 
 
-   def run( self ):
+   def run( self, show_func = None ):
 
       # disallow reuse of an object
-      assert not self.started
+      assert not self.scanned
+      self.scanned   = True
 
       self.src = mk_entry( self.src_input, hash_mode = self.hash_mode )
       self.dst = mk_entry( self.dst_input, hash_mode = self.hash_mode )
 
       diff_obj = self.__compare( self.src, self.dst )
-
-      # TODO: this needs to be refactored so that the scan is not recursive
 
       if self.dst.isdir() and self.src.isdir():
 
@@ -592,8 +597,12 @@ class DiffScanner( RootObj ):
          diff_obj = self.dir_queue.pop(0)
          self.__compare_children( *diff_obj.get_objs() )
 
-      # TODO: this needs to be moved to the cmdline processing context
-      self.diff_set.show()
+      if show_func:
+         show_func( self )
+
+
+   def show_all( self ):
+      self.diff_set.show_all()
 
 
    def __compare( self, src, dst ):
@@ -704,35 +713,7 @@ class ListScanner( RootObj ):
       self.max_rel_path  = 1
 
 
-   def add_obj( self, obj ):
-
-      # latch the longest rel_path length to format the column correctly
-      if obj.rel_path:
-         # print "DEBUG: %d, %s, %d" % (self.max_rel_path, obj.rel_path, len( obj.rel_path ) )
-         self.max_rel_path  = max( self.max_rel_path, len( obj.rel_path ) )
-
-      objs_key = obj.get_spec() 
-
-      # add it to the name index
-      assert not self.objs_idx.has_key( objs_key )
-      self.objs_idx[ objs_key ] = obj
-
-      # add it to the hash index
-      if obj.hash_sum:
-
-         hash_key = obj.hash_sum.get() 
-
-         if not self.hash_idx.has_key( hash_key ):
-            self.hash_idx[ hash_key ] = list()
-
-         self.hash_idx[ hash_key ].append( obj )
-
-      # if it's a directory, add it to the scan queue
-      if obj.isdir():
-         self.dir_queue.append( obj )
-
-
-   def run( self, fn = None ):
+   def run( self, show_func = None ):
 
       # step 1 - iterate the inputs and create objects for each
 
@@ -769,8 +750,36 @@ class ListScanner( RootObj ):
             # we're keeping them all in the objs_idx dictionary anyways
             obj.reset()
 
-      if fn:
-         fn( self )
+      if show_func:
+         show_func( self )
+
+
+   def add_obj( self, obj ):
+
+      # latch the longest rel_path length to format the column correctly
+      if obj.rel_path:
+         # print "DEBUG: %d, %s, %d" % (self.max_rel_path, obj.rel_path, len( obj.rel_path ) )
+         self.max_rel_path  = max( self.max_rel_path, len( obj.rel_path ) )
+
+      objs_key = obj.get_spec() 
+
+      # add it to the name index
+      assert not self.objs_idx.has_key( objs_key )
+      self.objs_idx[ objs_key ] = obj
+
+      # add it to the hash index
+      if obj.hash_sum:
+
+         hash_key = obj.hash_sum.get() 
+
+         if not self.hash_idx.has_key( hash_key ):
+            self.hash_idx[ hash_key ] = list()
+
+         self.hash_idx[ hash_key ].append( obj )
+
+      # if it's a directory, add it to the scan queue
+      if obj.isdir():
+         self.dir_queue.append( obj )
 
 
    def show_all( self ):
@@ -1199,7 +1208,7 @@ def run_diff( args = None, hash_mode = None ):
    src, dst = args
    # and call the comparison function
    ds = DiffScanner( src, dst, hash_mode )
-   ds.run()
+   ds.run( DiffScanner.show_all )
 
 COMMANDS = {
    "TEST"   : run_test,

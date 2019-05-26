@@ -348,6 +348,55 @@ class HashSum( RootObj ):
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
+class ScannerBase( RootObj ):
+
+   def __init__( self ):
+      RootObj.__init__( self )
+
+      self.scanned         = False
+      self.dir_queue       = list()
+
+
+   def add_obj( self, obj ):
+
+      # add the object to the result_set
+      self.result_set.add_obj( obj )
+      # if it's a directory, add it to the scan queue
+      if obj.isdir():
+         self.dir_queue.append( obj )
+
+
+   def run( self, show_func = None ):
+      # can only call this once
+      assert not self.scanned
+      self.scanned = True
+      # make sure the derived class as initiailzed the scan interface
+      assert self.start_scan
+      assert self.scan_children
+      assert self.result_set
+
+      # tell the derived class to start the scan operation
+      self.start_scan()
+
+      # now, interate the directory queue until it's empty
+      while len( self.dir_queue ):
+
+         # get the next directory to scan, and scan it
+         obj = self.dir_queue.pop(0)
+         obj.scan()
+
+         # and then 
+         self.scan_children( obj )
+
+         # TODO: we proably want to tie this to a "preserve" option
+         obj.reset()
+
+      if show_func:
+         show_func( self )
+
+
+# -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
 # this class identifies two corresponding BaseObj objects
 
 class DiffObj( RootObj ):
@@ -387,6 +436,15 @@ class DiffObj( RootObj ):
 
    def has_both( self ):
       return self.src and self.dst
+
+   def isdir( self ):
+      return self.has_both and self.src.isdir() and self.dst.isdir()
+
+   def reset( self ):
+      if self.src and self.src.isdir():
+         self.src.reset()
+      if self.dst and self.dst.isdir():
+         self.dst.reset()
 
    def has_diffs( self ):
       return len( self.fields )
@@ -491,7 +549,7 @@ class DiffSet( RootObj ):
       self.max_key_len  = 0
 
 
-   def add_entry( self, diff_obj ):
+   def add_obj( self, diff_obj ):
 
       assert isinstance( diff_obj, DiffObj )
 
@@ -572,13 +630,14 @@ DEBUG: DUMPING CATEGORY
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
-class DiffScanner( RootObj ):
+class DiffScanner( ScannerBase ):
 
    def __init__( self, src_input, dst_input, hash_mode, preserve = False ):
       assert isinstance( src_input, basestring )
       assert isinstance( dst_input, basestring )
-      RootObj.__init__( self )
+      ScannerBase.__init__( self )
 
+      # save the inputs
       self.src_input = src_input
       self.src       = None         # placeholder
       self.dst_input = dst_input
@@ -586,45 +645,69 @@ class DiffScanner( RootObj ):
       self.hash_mode = hash_mode
       self.preserve  = preserve     # whether we preserve "same" entries
 
-      self.scanned   = False
-      self.diff_set  = None
-      self.dir_queue = list()
+      # create the members needed by ScannerBase
+      self.start_scan      = self.__start_scan
+      self.scan_children   = self.__scan_children
+      self.result_set      = DiffSet()
 
 
-   def run( self, show_func = None ):
-
-      # disallow reuse of an object
-      assert not self.scanned
-      self.scanned   = True
+   def __start_scan( self ):
 
       self.src = mk_entry( self.src_input, hash_mode = self.hash_mode )
       self.dst = mk_entry( self.dst_input, hash_mode = self.hash_mode )
 
-      diff_obj = self.__compare( self.src, self.dst )
-
-      if self.dst.isdir() and self.src.isdir():
-
-         self.diff_set = DiffSet()
+      if self.src.isdir() and self.dst.isdir():
+         # scan the directories
+         self.src.scan()
+         self.dst.scan()
+         # we compare the children directly because we really don't care about
+         # comparing the attributes of the two root directories 
          self.__compare_children( self.src, self.dst )
 
-      while len( self.dir_queue ):
 
-         diff_obj = self.dir_queue.pop(0)
-         self.__compare_children( *diff_obj.get_objs() )
+   def __scan_children( self, obj ):
 
-      if show_func:
-         show_func( self )
+      self.__compare_children( *obj.get_objs() )
 
 
-   def show_all( self ):
-      self.diff_set.show_all()
+   def __compare_children( self, src_obj, dst_obj ):
+
+      assert src_obj.isdir()
+      assert dst_obj.isdir()
+
+      # get the keys (i.e.: the names) of the entries from both dst and src
+      src_key_set    = set( src_obj.get_child_keys() )
+      dst_key_set    = set( dst_obj.get_child_keys() )
+      # find the intersection, i.e.: the entry names that appear in both the dst and src
+      intersect_keys = dst_key_set.intersection( src_key_set )
+      # now subtract out the intersection to get what's unique in both
+      src_only_keys  = src_key_set - intersect_keys
+      dst_only_keys  = dst_key_set - intersect_keys
+
+      # dump the sets for debugging purposes
+      # these are the base sets
+      DEBUG_dump_set( "src_set",    src_key_set )
+      DEBUG_dump_set( "dst_set",    dst_key_set )
+      # these are the actual categories
+      DEBUG_dump_set( "src_only",   src_only_keys )
+      DEBUG_dump_set( "intersect",  intersect_keys )
+      DEBUG_dump_set( "dst_only",   dst_only_keys )
+
+      # create DiffObj instances for orphans and add them to the result set
+      self.__copy_children( src_obj, src_only_keys, lambda obj: DiffObj( obj,  None ) )
+      self.__copy_children( dst_obj, dst_only_keys, lambda obj: DiffObj( None, obj ) )
+
+      for name in intersect_keys:
+
+         src = src_obj.entries[ name ]
+         dst = dst_obj.entries[ name ]
+
+         diff_obj = self.__compare_child( src, dst )
+
+         self.add_obj( diff_obj )
 
 
-   def do_backup( self ):
-      self.diff_set.do_backup()
-
-
-   def __compare( self, src, dst ):
+   def __compare_child( self, src, dst ):
 
       DEBUG_emit_compare_banner( src, dst )
 
@@ -656,55 +739,6 @@ class DiffScanner( RootObj ):
       return diff_obj
 
 
-   def __compare_children( self, src_obj, dst_obj ):
-
-      assert src_obj.isdir()
-      assert dst_obj.isdir()
-
-      src_obj.scan()
-      dst_obj.scan()
-
-      # get the keys (i.e.: the names) of the entries from both dst and src
-      src_key_set    = set( src_obj.get_child_keys() )
-      dst_key_set    = set( dst_obj.get_child_keys() )
-      # find the intersection, i.e.: the entry names that appear in both the dst and src
-      intersect_keys = dst_key_set.intersection( src_key_set )
-      # now subtract out the intersection to get what's unique in both
-      src_only_keys  = src_key_set - intersect_keys
-      dst_only_keys  = dst_key_set - intersect_keys
-
-      # dump the sets for debugging purposes
-      # these are the base sets
-      DEBUG_dump_set( "src_set",    src_key_set )
-      DEBUG_dump_set( "dst_set",    dst_key_set )
-      # these are the actual categories
-      DEBUG_dump_set( "src_only",   src_only_keys )
-      DEBUG_dump_set( "intersect",  intersect_keys )
-      DEBUG_dump_set( "dst_only",   dst_only_keys )
-
-      # create DiffObj instances for orphans and add them to the diff_set
-      self.__copy_children( src_obj, src_only_keys, lambda obj: DiffObj( obj,  None ) )
-      self.__copy_children( dst_obj, dst_only_keys, lambda obj: DiffObj( None, obj ) )
-
-      for name in intersect_keys:
-
-         src = src_obj.entries[ name ]
-         dst = dst_obj.entries[ name ]
-
-         diff_obj = self.__compare( src, dst )
-
-         self.diff_set.add_entry( diff_obj );
-
-         if src.isdir() and dst.isdir():
-            self.dir_queue.append( diff_obj )
-
-      if src.isdir():
-         src.reset()
-
-      if dst.isdir():
-         dst.reset()
-
-
    def __copy_children( self, from_dir, names, mk_diff_fn ):
 
       for name in names:
@@ -712,8 +746,16 @@ class DiffScanner( RootObj ):
          obj = from_dir.entries[ name ]
          # create a diff entry for it
          diff_obj = mk_diff_fn( obj );
-         # and adde it to the result
-         self.diff_set.add_entry( diff_obj )
+         # and add it to the result
+         self.result_set.add_obj( diff_obj )
+
+
+   def show_all( self ):
+      self.result_set.show_all()
+
+
+   def do_backup( self ):
+      self.result_set.do_backup()
 
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -782,31 +824,25 @@ class ListSet( RootObj ):
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
-class ListScanner( RootObj ):
+class ListScanner( ScannerBase ):
 
    def __init__( self, inputs, hash_mode ):
-      RootObj.__init__( self )
+      assert inputs
+      ScannerBase.__init__( self )
 
-      self.inputs       = inputs
-      self.hash_mode    = hash_mode
+      # save the inputs
+      self.inputs          = inputs
+      self.hash_mode       = hash_mode
 
-      self.list_set     = ListSet()
-
-      self.dir_queue    = list()
-
-
-   def add_obj( self, obj ):
-      # add the object to the list set
-      self.list_set.add_obj( obj )
-      # if it's a directory, add it to the scan queue
-      if obj.isdir():
-         self.dir_queue.append( obj )
+      # create the members needed by ScannerBase
+      self.start_scan      = self.__start_scan
+      self.scan_children   = self.__scan_children
+      self.result_set      = ListSet()
 
 
-   def run( self, show_func = None ):
+   def __start_scan( self ):
 
-      # step 1 - iterate the inputs and create objects for each
-
+      # iterate the inputs and create objects for each
       for file_spec in self.inputs:
 
          # split this input to get the root and name values
@@ -818,41 +854,30 @@ class ListScanner( RootObj ):
          # and add the object to the list
          self.add_obj( obj )
 
-      # step 2 - scan the directory queue to scan the tree
 
-      while len( self.dir_queue ):
+   def __scan_children( self, obj ):
 
-         obj = self.dir_queue.pop(0)
-         obj.scan()
+      if obj.entries:
 
-         if obj.entries:
+         entry_names = obj.get_child_keys()
+         for entry_name in entry_names:
 
-            entry_names = obj.get_child_keys()
-            for entry_name in entry_names:
+            # get the child object
+            child = obj.entries[ entry_name ]
 
-               # get the child object
-               child = obj.entries[ entry_name ]
-
-               # and add it to the list
-               self.add_obj( child )
-
-            # this normally cleans up child objects, but it's superfluous as
-            # we're keeping them all in the objs_idx dictionary anyways
-            obj.reset()
-
-      if show_func:
-         show_func( self )
+            # and add it to the list
+            self.add_obj( child )
 
 
    def show_all( self ):
 
-      self.list_set.show_all()
+      self.result_set.show_all()
 
 
    def show_dups( self ):
       assert self.hash_mode
 
-      self.list_set.show_dups()
+      self.result_set.show_dups()
 
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -924,6 +949,9 @@ class BaseObj( RootObj ):
             diff_obj.add_field( "hash_sum" )
 
       return diff_obj
+
+   def reset( self ):
+      pass
 
    def isdir( self ):
       return False
@@ -1246,7 +1274,7 @@ def run_test( args = None, hash_mode = None ):
    de.add_field( "ftype" )
 
    ds = DiffSet()
-   ds.add_entry( de )
+   ds.add_obj( de )
 
    ds.dump()
 

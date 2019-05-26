@@ -216,7 +216,7 @@ class PermsObj( RootObj ):
 class EpochObj( RootObj ):
 
    def __init__( self, seconds ):
-
+      RootObj.__init__( self )
       self.seconds = seconds
 
    def __str__( self ):
@@ -235,6 +235,8 @@ class GidObj( RootObj ):
    def __init__( self, gid = None, name = None ):
       assert not gid or not name # can't have both
       assert gid or name         # must have one
+
+      RootObj.__init__( self )
 
       if gid:
          self.grp_obj = grp.getgrgid( gid )
@@ -256,6 +258,8 @@ class UidObj( RootObj ):
    def __init__( self, uid = None, name = None ):
       assert not uid or not name # can't have both
       assert uid or name         # must have one
+
+      RootObj.__init__( self )
 
       if uid:
          self.pwd_obj = pwd.getpwuid( uid )
@@ -285,6 +289,8 @@ class HashMode( RootObj ):
 
    def __init__( self, name, hash_obj ):
 
+      RootObj.__init__( self )
+
       hash_temp = hash_obj()
       hash_temp.update( "test data for computing hash lengths" )
 
@@ -313,6 +319,8 @@ class HashSum( RootObj ):
    def __init__( self, file_spec, hash_mode ):
 
       assert hash_mode
+
+      RootObj.__init__( self )
 
       # this defines the algorithm
       self.hash_mode    = hash_mode
@@ -512,6 +520,7 @@ class DiffSet( RootObj ):
       # and latch the max key length (for the show function)
       self.max_key_len = max( self.max_key_len, len( diff_key ) )
 
+
    # not currently used
    def __show( self ):
 
@@ -520,9 +529,23 @@ class DiffSet( RootObj ):
          for key in cat.keys():
             print "%8s: %s" % ( cat_name, key )
 
+
    def show_all( self ):
 
       keys = self.all.keys()
+      keys.sort()
+
+      for key in keys:
+         diff_obj = self.all[ key ]
+         diff_obj.show( self.max_key_len )
+
+
+   def do_backup( self ):
+
+      keys = list()
+      keys.extend( self.diff.keys() )
+      keys.extend( self.dst_only.keys() )
+      keys.extend( self.diff_type.keys() )
       keys.sort()
 
       for key in keys:
@@ -564,6 +587,8 @@ class DiffScanner( RootObj ):
       assert isinstance( src_input, basestring )
       assert isinstance( dst_input, basestring )
 
+      RootObj.__init__( self )
+
       self.src_input = src_input
       self.src       = None         # placeholder
       self.dst_input = dst_input
@@ -603,6 +628,10 @@ class DiffScanner( RootObj ):
 
    def show_all( self ):
       self.diff_set.show_all()
+
+
+   def do_backup( self ):
+      self.diff_set.do_backup()
 
 
    def __compare( self, src, dst ):
@@ -699,18 +728,93 @@ class DiffScanner( RootObj ):
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
+class ListSet( RootObj ):
+
+   def __init__( self):
+
+      # call the base class constructor
+      RootObj.__init__( self )
+
+      self.objs_idx     = dict()
+      self.hash_idx     = dict()
+
+      self.max_rel_path  = 1
+
+
+   def add_obj( self, obj ):
+
+      # latch the longest rel_path length to format the column correctly
+      if obj.rel_path:
+         # print "DEBUG: %d, %s, %d" % (self.max_rel_path, obj.rel_path, len( obj.rel_path ) )
+         self.max_rel_path  = max( self.max_rel_path, len( obj.rel_path ) )
+
+      objs_key = obj.get_spec() 
+
+      # add it to the name index
+      assert not self.objs_idx.has_key( objs_key )
+      self.objs_idx[ objs_key ] = obj
+
+      # add it to the hash index
+      if obj.hash_sum:
+
+         hash_key = obj.hash_sum.get() 
+
+         if not self.hash_idx.has_key( hash_key ):
+            self.hash_idx[ hash_key ] = list()
+
+         self.hash_idx[ hash_key ].append( obj )
+
+
+   def show_all( self ):
+
+      names = self.objs_idx.keys()
+      names.sort()
+
+      for name in names:
+         self.objs_idx[ name ].show( self.max_rel_path )
+
+
+   def show_dups( self ):
+
+      names = self.hash_idx.keys()
+      names.sort()
+
+      for name in names:
+
+         dups_list = self.hash_idx[ name ]
+         assert len( dups_list )
+
+         if len( dups_list ) > 1:
+
+            print "\n%s: %s\n" % ( hash_mode.hash_name, name )
+
+            for obj in dups_list:
+               obj.show( self.max_rel_path, omit_hash = True )
+
+
+# -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
 class ListScanner( RootObj ):
 
    def __init__( self, inputs, hash_mode ):
 
+      # call the base class constructor
+      RootObj.__init__( self )
+
       self.inputs       = inputs
       self.hash_mode    = hash_mode
 
-      self.objs_idx     = dict()
-      self.hash_idx     = dict()
+      self.list_set     = ListSet()
+
       self.dir_queue    = list()
 
-      self.max_rel_path  = 1
+
+   def add_obj( self, obj ):
+      # add the object to the list set
+      self.list_set.add_obj( obj )
+      # if it's a directory, add it to the scan queue
+      if obj.isdir():
+         self.dir_queue.append( obj )
 
 
    def run( self, show_func = None ):
@@ -754,60 +858,15 @@ class ListScanner( RootObj ):
          show_func( self )
 
 
-   def add_obj( self, obj ):
-
-      # latch the longest rel_path length to format the column correctly
-      if obj.rel_path:
-         # print "DEBUG: %d, %s, %d" % (self.max_rel_path, obj.rel_path, len( obj.rel_path ) )
-         self.max_rel_path  = max( self.max_rel_path, len( obj.rel_path ) )
-
-      objs_key = obj.get_spec() 
-
-      # add it to the name index
-      assert not self.objs_idx.has_key( objs_key )
-      self.objs_idx[ objs_key ] = obj
-
-      # add it to the hash index
-      if obj.hash_sum:
-
-         hash_key = obj.hash_sum.get() 
-
-         if not self.hash_idx.has_key( hash_key ):
-            self.hash_idx[ hash_key ] = list()
-
-         self.hash_idx[ hash_key ].append( obj )
-
-      # if it's a directory, add it to the scan queue
-      if obj.isdir():
-         self.dir_queue.append( obj )
-
-
    def show_all( self ):
 
-      names = self.objs_idx.keys()
-      names.sort()
-
-      for name in names:
-         self.objs_idx[ name ].show( self.max_rel_path )
+      self.list_set.show_all()
 
 
    def show_dups( self ):
       assert self.hash_mode
 
-      names = self.hash_idx.keys()
-      names.sort()
-
-      for name in names:
-
-         dups_list = self.hash_idx[ name ]
-         assert len( dups_list )
-
-         if len( dups_list ) > 1:
-
-            print "\n%s: %s\n" % ( hash_mode.hash_name, name )
-
-            for obj in dups_list:
-               obj.show( self.max_rel_path, omit_hash = True )
+      self.list_set.show_dups()
 
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -1148,10 +1207,11 @@ def mk_entry( root, rel_path = None, name = None, hash_mode = None ):
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
 
-# helper function for running the ListScanner, results are emitted by an
-# unbound method
+# helper functions for running the ListScanner and DiffScanner; results can be
+# optionally processed by the given unbound method
 
-def _run_list( args = None, hash_mode = None, fn = None ):
+
+def _run_list( args = None, hash_mode = None, unbound_func = None ):
 
    if not args:
       args = sys.argv[1:]
@@ -1160,7 +1220,22 @@ def _run_list( args = None, hash_mode = None, fn = None ):
       sys.exit(1)
 
    ls = ListScanner( args, hash_mode )
-   ls.run( fn )
+   ls.run( unbound_func )
+
+
+def _run_diff( args = None, hash_mode = None, unbound_func = None ):
+
+   if not args:
+      args = sys.argv[1:]
+   if len( args ) != 2:
+      print "ERROR: specify exactly 2 objects to compare"
+      sys.exit()
+
+   # get the args
+   src, dst = args
+   # and call the comparison function
+   ds = DiffScanner( src, dst, hash_mode )
+   ds.run( unbound_func )
 
 
 # top-level run commands, for processing command line modes
@@ -1191,6 +1266,7 @@ def run_list( args = None, hash_mode = None ):
 
    _run_list( args, hash_mode, ListScanner.show_all )
 
+
 def run_dups( args = None, hash_mode = None ):
 
    _run_list( args, hash_mode, ListScanner.show_dups )
@@ -1198,23 +1274,22 @@ def run_dups( args = None, hash_mode = None ):
 
 def run_diff( args = None, hash_mode = None ):
 
-   if not args:
-      args = sys.argv[1:]
-   if len( args ) != 2:
-      print "ERROR: specify exactly 2 objects to compare"
-      sys.exit()
+   _run_diff( args, hash_mode, DiffScanner.show_all )
 
-   # get the args
-   src, dst = args
-   # and call the comparison function
-   ds = DiffScanner( src, dst, hash_mode )
-   ds.run( DiffScanner.show_all )
+
+def run_backup( args = None, hash_mode = None ):
+
+   _run_diff( args, hash_mode, DiffScanner.do_backup )
+
+
+
 
 COMMANDS = {
-   "TEST"   : run_test,
    "LIST"   : run_list,
    "DUPS"   : run_dups,
    "DIFF"   : run_diff,
+   "BACK"   : run_backup,
+   "TEST"   : run_test,
 }
 
 
@@ -1233,12 +1308,16 @@ if __name__ == "__main__":
    parser = argparse.ArgumentParser( "directory scanning, comparison and backup" )
 
    mode = parser.add_mutually_exclusive_group( required=True )
-   mode.add_argument( "-d", "--diff",  action="store_const", const="DIFF",    dest="mode",       help="enables differencing mode"  )
-   mode.add_argument( "-l", "--list",  action="store_const", const="LIST",    dest="mode",       help="enables list mode" )
-   mode.add_argument( "-D", "--dups",  action="store_const", const="DUPS",    dest="mode",       help="enables bench testing" )
+
+   mode.add_argument( "-l", "--list",  action="store_const", const="LIST",    dest="mode",       help="standard listing" )
+   mode.add_argument( "-D", "--dups",  action="store_const", const="DUPS",    dest="mode",       help="identify duplicates (hash mode required)" )
+   mode.add_argument( "-d", "--diff",  action="store_const", const="DIFF",    dest="mode",       help="show differences"  )
+   mode.add_argument( "-b", "--back",  action="store_const", const="BACK",    dest="mode",       help="generate a backup snapshot"  )
+
    mode.add_argument( "-t", "--test",  action="store_const", const="TEST",    dest="mode",       help="enables bench testing" )
 
    hash_name = parser.add_mutually_exclusive_group()
+
    hash_name.add_argument( "--md5",    action="store_const", const="md5",     dest="hash_name",  help="calc/compare md5 values" )
    hash_name.add_argument( "--sha1",   action="store_const", const="sha1",    dest="hash_name",  help="calc/compare sha1 values" )
    hash_name.add_argument( "--sha224", action="store_const", const="sha224",  dest="hash_name",  help="calc/compare sha224 values" )

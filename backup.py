@@ -149,6 +149,10 @@ class RootObj:
 
 class PermsObj( RootObj ):
 
+   def __init__( self, stat_info ):
+      RootObj.__init__( self )
+      self.val   = stat.S_IMODE( stat_info.st_mode )
+
    perms = [
       '---',
       '--x',
@@ -170,10 +174,6 @@ class PermsObj( RootObj ):
       'rw-',
       'rws'
    ]
-
-   def __init__( self, stat_info ):
-      RootObj.__init__( self )
-      self.val   = stat.S_IMODE( stat_info.st_mode )
 
    def __str__( self ):
       return "%s" % oct( self.val )
@@ -235,7 +235,6 @@ class GidObj( RootObj ):
    def __init__( self, gid = None, name = None ):
       assert not gid or not name # can't have both
       assert gid or name         # must have one
-
       RootObj.__init__( self )
 
       if gid:
@@ -258,7 +257,6 @@ class UidObj( RootObj ):
    def __init__( self, uid = None, name = None ):
       assert not uid or not name # can't have both
       assert uid or name         # must have one
-
       RootObj.__init__( self )
 
       if uid:
@@ -279,16 +277,9 @@ class UidObj( RootObj ):
 
 class HashMode( RootObj ):
 
-   @staticmethod
-   def get_len( hash_name ):
-      return HASH_MODES[ hash_name ].hash_len
-
-   @staticmethod
-   def get_mode( hash_name ):
-      return HASH_MODES[ hash_name ]
-
    def __init__( self, name, hash_obj ):
-
+      assert name
+      assert hash_obj
       RootObj.__init__( self )
 
       hash_temp = hash_obj()
@@ -299,6 +290,14 @@ class HashMode( RootObj ):
       self.hash_len  = len( hash_temp.hexdigest() )
 
       del hash_temp
+
+   @staticmethod
+   def get_len( hash_name ):
+      return HASH_MODES[ hash_name ].hash_len
+
+   @staticmethod
+   def get_mode( hash_name ):
+      return HASH_MODES[ hash_name ]
 
    def get_sum( self ):
       return self.hash_obj()
@@ -317,9 +316,8 @@ HASH_MODES = {
 class HashSum( RootObj ):
 
    def __init__( self, file_spec, hash_mode ):
-
+      assert file_spec
       assert hash_mode
-
       RootObj.__init__( self )
 
       # this defines the algorithm
@@ -355,14 +353,10 @@ class HashSum( RootObj ):
 class DiffObj( RootObj ):
 
    def __init__( self, src, dst ):
-
       if src:
          assert issubclass( src.__class__, BaseObj )
-
       if dst:
          assert issubclass( dst.__class__, BaseObj )
-
-      # call the base class constructor
       RootObj.__init__( self )
 
       self.src = src
@@ -476,8 +470,6 @@ class DiffObj( RootObj ):
 class DiffSet( RootObj ):
 
    def __init__( self ):
-
-      # call the base class constructor
       RootObj.__init__( self )
 
       # collections
@@ -583,10 +575,8 @@ DEBUG: DUMPING CATEGORY
 class DiffScanner( RootObj ):
 
    def __init__( self, src_input, dst_input, hash_mode, preserve = False ):
-
       assert isinstance( src_input, basestring )
       assert isinstance( dst_input, basestring )
-
       RootObj.__init__( self )
 
       self.src_input = src_input
@@ -731,8 +721,6 @@ class DiffScanner( RootObj ):
 class ListSet( RootObj ):
 
    def __init__( self):
-
-      # call the base class constructor
       RootObj.__init__( self )
 
       self.objs_idx     = dict()
@@ -797,8 +785,6 @@ class ListSet( RootObj ):
 class ListScanner( RootObj ):
 
    def __init__( self, inputs, hash_mode ):
-
-      # call the base class constructor
       RootObj.__init__( self )
 
       self.inputs       = inputs
@@ -876,6 +862,30 @@ class ListScanner( RootObj ):
 
 class BaseObj( RootObj ):
 
+   def __init__( self, root, rel_path, name, ftype, hash_mode ):
+      RootObj.__init__( self )
+
+      self.root         = root
+      self.rel_path     = rel_path
+      self.name         = name
+      self.name_desc    = name
+      self.ftype        = ftype
+      self.ftype_desc   = '-'
+      self.hash_mode    = hash_mode
+
+      self.stat_info    = get_stat( self.get_spec() )
+
+      self.perm         = PermsObj( self.stat_info )
+      self.uid          = UidObj( self.stat_info.st_uid )
+      self.gid          = GidObj( self.stat_info.st_gid )
+      self.size         = self.stat_info.st_size
+
+      self.ctime        = EpochObj( self.stat_info.st_ctime ) # meta-data changed (created?)
+      self.mtime        = EpochObj( self.stat_info.st_mtime ) # modified
+      self.atime        = EpochObj( self.stat_info.st_atime ) # accessed
+
+      self.hash_sum     = None
+
    # these are helper functions used by the derived class to compare the objects
 
    @staticmethod
@@ -914,31 +924,6 @@ class BaseObj( RootObj ):
             diff_obj.add_field( "hash_sum" )
 
       return diff_obj
-
-   def __init__( self, root, rel_path, name, ftype, hash_mode ):
-
-      RootObj.__init__( self )
-
-      self.root         = root
-      self.rel_path     = rel_path
-      self.name         = name
-      self.name_desc    = name
-      self.ftype        = ftype
-      self.ftype_desc   = '-'
-      self.hash_mode    = hash_mode
-
-      self.stat_info    = get_stat( self.get_spec() )
-
-      self.perm         = PermsObj( self.stat_info )
-      self.uid          = UidObj( self.stat_info.st_uid )
-      self.gid          = GidObj( self.stat_info.st_gid )
-      self.size         = self.stat_info.st_size
-
-      self.ctime        = EpochObj( self.stat_info.st_ctime ) # meta-data changed (created?)
-      self.mtime        = EpochObj( self.stat_info.st_mtime ) # modified
-      self.atime        = EpochObj( self.stat_info.st_atime ) # accessed
-
-      self.hash_sum     = None
 
    def isdir( self ):
       return False
@@ -1003,6 +988,14 @@ class BaseObj( RootObj ):
 
 class FileObj( BaseObj ):
 
+   def __init__( self, root, rel_path, name, hash_mode ):
+      assert root
+      assert name
+      BaseObj.__init__( self, root, rel_path, name, IS_FILE, hash_mode )
+
+      if hash_mode:
+         self.hash_sum = HashSum( self.get_spec(), hash_mode )
+
    fields = (
       "name",           # TODO: this should be controlled by the check_name parameter
       "ftype",
@@ -1019,12 +1012,6 @@ class FileObj( BaseObj ):
       diff_obj = BaseObj.compare_fields( src, dst, FileObj.fields, check_name, check_hash = src.has_hash() )
       return diff_obj
 
-   def __init__( self, root, rel_path, name, hash_mode ):
-      BaseObj.__init__( self, root, rel_path, name, IS_FILE, hash_mode )
-
-      if hash_mode:
-         self.hash_sum = HashSum( self.get_spec(), hash_mode )
-
    def isfile( self ):
       return True
 
@@ -1034,6 +1021,16 @@ class FileObj( BaseObj ):
 # link object
 
 class LinkObj( BaseObj ):
+
+   def __init__( self, root, rel_path, name, hash_mode ):
+      assert root
+      assert name
+      BaseObj.__init__( self, root, rel_path, name, IS_LINK, hash_mode )
+
+      self.link = os.readlink( self.get_spec() )
+
+      self.name_desc    = self.name + ' -> ' + self.link
+      self.ftype_desc   = 'l'
 
    fields = (
       "name",           # TODO: this should be controlled by the check_name parameter
@@ -1051,13 +1048,6 @@ class LinkObj( BaseObj ):
       diff_obj = BaseObj.compare_fields( src, dst, LinkObj.fields, check_name )
       return diff_obj
 
-   def __init__( self, root, rel_path, name, hash_mode ):
-      BaseObj.__init__( self, root, rel_path, name, IS_LINK, hash_mode )
-
-      self.link = os.readlink( self.get_spec() )
-
-      self.name_desc    = self.name + ' -> ' + self.link
-      self.ftype_desc   = 'l'
 
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -1065,6 +1055,18 @@ class LinkObj( BaseObj ):
 # directory object
 
 class DirObj( BaseObj ):
+
+   def __init__( self, root, rel_path = None, name = None, hash_mode = None ):
+      assert root
+      root              = os.path.abspath( root )
+      BaseObj.__init__( self, root, rel_path, name, IS_DIR, hash_mode )
+
+      self.entries      = None
+      self.scanned      = False
+
+      self.ftype_desc   = 'd'
+
+      # print "DEBUG: dir: %s" % self.__class__
 
    fields = (
       "name",           # TODO: this should be controlled by the check_name parameter
@@ -1077,19 +1079,6 @@ class DirObj( BaseObj ):
 
       diff_obj = BaseObj.compare_fields( src, dst, DirObj.fields, check_name )
       return diff_obj
-
-   def __init__( self, root, rel_path = None, name = None, hash_mode = None ):
-
-      root              = os.path.abspath( root )
-
-      BaseObj.__init__( self, root, rel_path, name, IS_DIR, hash_mode )
-
-      self.entries      = None
-      self.scanned      = False
-
-      self.ftype_desc   = 'd'
-
-      # print "DEBUG: dir: %s" % self.__class__
 
    def __mk_entry( self, entry_name ):
       # get the relative path of the entry

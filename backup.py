@@ -348,6 +348,59 @@ class HashSum( RootObj ):
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
+class SetBase( RootObj ):
+
+   def __init__( self):
+      RootObj.__init__( self )
+
+      self.objs_idx        = dict()
+      self.hash_idx        = dict()
+
+      self.max_disp_len = 1
+
+
+   def add_obj( self, obj ):
+
+      # get the object key
+      objs_key = obj.get_key() 
+      assert not self.objs_idx.has_key( objs_key )
+      # add it to the name index
+      self.objs_idx[ objs_key ] = obj
+
+      # if the object has been hashed, add it to the hash index
+      if obj.has_hash():
+
+         hash_key = obj.get_hash() 
+
+         if not self.hash_idx.has_key( hash_key ):
+            self.hash_idx[ hash_key ] = list()
+
+         self.hash_idx[ hash_key ].append( obj )
+
+      # latch the longest display length
+      self.max_disp_len = max( self.max_disp_len, obj.get_disp_len() )
+
+
+   def enum_objs( self, func ):
+
+      names = self.objs_idx.keys()
+      names.sort()
+
+      for name in names:
+         func( self.objs_idx[ name ] )
+
+
+   def enum_hashes( self, func ):
+
+      hashes = self.hash_idx.keys()
+      hashes.sort()
+
+      for hash_key in hashes:
+         func( hash_key, self.hash_idx[ hash_key ] )
+
+
+# -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
 class ScannerBase( RootObj ):
 
    def __init__( self ):
@@ -468,6 +521,10 @@ class DiffObj( RootObj ):
 
       return CAT_DIFF # "DIFF"
 
+   def has_hash( self ):
+      # TODO: can/should we hash these objects?
+      return False
+
    def get_key( self ):
 
       if self.has_both():
@@ -475,6 +532,9 @@ class DiffObj( RootObj ):
          assert self.src.name     == self.dst.name
 
       return self.__get_one().get_relspec()
+
+   def get_disp_len( self ):
+      return len( self.get_key() )
 
    def get_ftype( self ):
 
@@ -525,13 +585,12 @@ class DiffObj( RootObj ):
 # this class collects a set of DiffObj objects in category specific
 # dictionaries
 
-class DiffSet( RootObj ):
+class DiffSet( SetBase ):
 
    def __init__( self ):
-      RootObj.__init__( self )
+      SetBase.__init__( self )
 
       # collections
-      self.all       = dict()
       self.same      = dict()
       self.diff      = dict()
       self.src_only  = dict()
@@ -546,12 +605,11 @@ class DiffSet( RootObj ):
          CAT_TYPE    : self.diff_type,
       }
 
-      self.max_key_len  = 0
-
 
    def add_obj( self, diff_obj ):
-
       assert isinstance( diff_obj, DiffObj )
+
+      SetBase.add_obj( self, diff_obj )
 
       # get the key and category for this difference entry
       diff_key = diff_obj.get_key()
@@ -559,35 +617,18 @@ class DiffSet( RootObj ):
       # get the dictionary for the given category
       cat_dict = self.category[ diff_cat ]
 
-      # make sure we don't have any duplicates
-      assert not cat_dict.has_key( diff_key )
-
       # insert the object into the appropriate dictionary
       cat_dict[ diff_key ] = diff_obj
-      # add it to the superset
-      self.all[ diff_key ] = diff_obj
-
-      # and latch the max key length (for the show function)
-      self.max_key_len = max( self.max_key_len, len( diff_key ) )
-
-
-   # not currently used
-   def __show( self ):
-
-      for cat_name in CAT_ALL:
-         cat = self.category[ cat_name ]
-         for key in cat.keys():
-            print "%8s: %s" % ( cat_name, key )
 
 
    def show_all( self ):
 
-      keys = self.all.keys()
+      keys = self.objs_idx.keys()
       keys.sort()
 
       for key in keys:
-         diff_obj = self.all[ key ]
-         diff_obj.show( self.max_key_len )
+         diff_obj = self.objs_idx[ key ]
+         diff_obj.show( self.max_disp_len )
 
 
    def do_backup( self ):
@@ -599,8 +640,8 @@ class DiffSet( RootObj ):
       keys.sort()
 
       for key in keys:
-         diff_obj = self.all[ key ]
-         diff_obj.show( self.max_key_len )
+         diff_obj = self.objs_idx[ key ]
+         diff_obj.show( self.max_disp_len )
 
 
    def dump( self ):
@@ -760,66 +801,32 @@ class DiffScanner( ScannerBase ):
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 
-class ListSet( RootObj ):
+class ListSet( SetBase ):
 
    def __init__( self):
-      RootObj.__init__( self )
-
-      self.objs_idx     = dict()
-      self.hash_idx     = dict()
-
-      self.max_rel_path  = 1
-
-
-   def add_obj( self, obj ):
-
-      # latch the longest rel_path length to format the column correctly
-      if obj.rel_path:
-         # print "DEBUG: %d, %s, %d" % (self.max_rel_path, obj.rel_path, len( obj.rel_path ) )
-         self.max_rel_path  = max( self.max_rel_path, len( obj.rel_path ) )
-
-      objs_key = obj.get_spec() 
-
-      # add it to the name index
-      assert not self.objs_idx.has_key( objs_key )
-      self.objs_idx[ objs_key ] = obj
-
-      # add it to the hash index
-      if obj.hash_sum:
-
-         hash_key = obj.hash_sum.get() 
-
-         if not self.hash_idx.has_key( hash_key ):
-            self.hash_idx[ hash_key ] = list()
-
-         self.hash_idx[ hash_key ].append( obj )
+      SetBase.__init__( self )
 
 
    def show_all( self ):
+      self.enum_objs( self.__show_obj )
 
-      names = self.objs_idx.keys()
-      names.sort()
-
-      for name in names:
-         self.objs_idx[ name ].show( self.max_rel_path )
+   def __show_obj( self, obj ):
+      obj.show( self.max_disp_len )
 
 
    def show_dups( self ):
+      self.enum_hashes( self.__show_hash )
 
-      names = self.hash_idx.keys()
-      names.sort()
+   def __show_hash( self, name, obj_list ):
+      assert name
+      assert len( obj_list )
 
-      for name in names:
+      if len( obj_list ) > 1:
 
-         dups_list = self.hash_idx[ name ]
-         assert len( dups_list )
+         print "\n%s: %s\n" % ( hash_mode.hash_name, name )
 
-         if len( dups_list ) > 1:
-
-            print "\n%s: %s\n" % ( hash_mode.hash_name, name )
-
-            for obj in dups_list:
-               obj.show( self.max_rel_path, omit_hash = True )
+         for obj in obj_list:
+            obj.show( self.max_disp_len, omit_hash = True )
 
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -959,8 +966,24 @@ class BaseObj( RootObj ):
    def isfile( self ):
       return False
 
-   def has_hash( self ):
+   def get_key( self ):
+      return self.get_spec()
+
+   def can_hash( self ):
       return self.hash_mode is not None
+
+   def has_hash( self ):
+      return self.hash_sum is not None
+
+   def get_hash( self ):
+      if self.has_hash():
+         return self.hash_sum.get()
+      raise AssertionError
+
+   def get_disp_len( self ):
+      if self.rel_path:
+         return len( self.rel_path )
+      return 0
 
    def get_spec( self ):
       assert self.root
@@ -1037,7 +1060,7 @@ class FileObj( BaseObj ):
    @staticmethod
    def compare( src, dst, check_name = False ):
 
-      diff_obj = BaseObj.compare_fields( src, dst, FileObj.fields, check_name, check_hash = src.has_hash() )
+      diff_obj = BaseObj.compare_fields( src, dst, FileObj.fields, check_name, check_hash = src.can_hash() )
       return diff_obj
 
    def isfile( self ):

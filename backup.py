@@ -146,6 +146,14 @@ class RootObj:
       #pprint.pprint( self.__dict__ )
       print "\nDUMP: class '%s'\n%s" % ( self.__class__, self )
 
+   def enum_objs( self, objs_dict, func ):
+
+      keys = objs_dict.keys()
+      keys.sort()
+
+      for key in keys:
+         func( key, objs_dict[ key ] )
+
 
 class PermsObj( RootObj ):
 
@@ -382,21 +390,24 @@ class SetBase( RootObj ):
 
 
    def enum_objs( self, func ):
-
-      names = self.objs_idx.keys()
-      names.sort()
-
-      for name in names:
-         func( self.objs_idx[ name ] )
+      assert func
+      RootObj.enum_objs( self, self.objs_idx, func )
 
 
-   def enum_hashes( self, func ):
+   def enum_hashes( self, show_hash_sum, show_matching_item ):
 
       hashes = self.hash_idx.keys()
       hashes.sort()
 
       for hash_key in hashes:
-         func( hash_key, self.hash_idx[ hash_key ] )
+
+         items = self.hash_idx[ hash_key ]
+         cnt   = len( items )
+
+         show_hash_sum( hash_key, cnt )
+
+         for obj in items:
+            show_matching_item( hash_key, cnt, obj )
 
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -622,13 +633,10 @@ class DiffSet( SetBase ):
 
 
    def show_all( self ):
+      self.enum_objs( self.__show_obj )
 
-      keys = self.objs_idx.keys()
-      keys.sort()
-
-      for key in keys:
-         diff_obj = self.objs_idx[ key ]
-         diff_obj.show( self.max_disp_len )
+   def __show_obj( self, key, obj ):
+      obj.show( self.max_disp_len )
 
 
    def do_backup( self ):
@@ -810,23 +818,27 @@ class ListSet( SetBase ):
    def show_all( self ):
       self.enum_objs( self.__show_obj )
 
-   def __show_obj( self, obj ):
+   def __show_obj( self, key, obj ):
       obj.show( self.max_disp_len )
 
 
    def show_dups( self ):
-      self.enum_hashes( self.__show_hash )
+      self.enum_hashes( self.__show_hash_sum, self.__show_matching_item )
 
-   def __show_hash( self, name, obj_list ):
-      assert name
-      assert len( obj_list )
+   def __show_hash_sum( self, hash_sum, cnt ):
+      assert hash_sum
+      assert cnt
 
-      if len( obj_list ) > 1:
+      if cnt > 1:
+         print "\n%s: %s\n" % ( hash_mode.hash_name, hash_sum )
 
-         print "\n%s: %s\n" % ( hash_mode.hash_name, name )
+   def __show_matching_item( self, hash_sum, cnt, obj ):
+      assert hash_sum
+      assert cnt
+      assert obj
 
-         for obj in obj_list:
-            obj.show( self.max_disp_len, omit_hash = True )
+      if cnt > 1:
+         obj.show( self.max_disp_len, omit_hash = True )
 
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-

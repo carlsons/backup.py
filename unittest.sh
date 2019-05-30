@@ -21,5 +21,7 @@ run_test ./backup.py -l --md5 *
 run_test ./backup.py -D --md5 *
 run_test ./backup.py -d dir_src dir_dst
 run_test ./backup.py -d --md5 dir_src dir_dst
+run_test ./backup.py -b dir_src dir_dst
+run_test ./backup.py -b --md5 dir_src dir_dst
 
 # vim: syntax=sh

@@ -681,7 +681,15 @@ DEBUG: DUMPING CATEGORY
 
 class DiffScanner( ScannerBase ):
 
-   def __init__( self, src_input, dst_input, hash_mode, preserve = False ):
+   def __init__( self, inputs, hash_mode, preserve = False ):
+
+      assert inputs
+
+      if len( inputs ) != 2:
+         print "ERROR: specify exactly 2 objects to compare"
+         sys.exit()
+
+      src_input, dst_input = inputs
       assert isinstance( src_input, basestring )
       assert isinstance( dst_input, basestring )
       ScannerBase.__init__( self )
@@ -847,6 +855,11 @@ class ListScanner( ScannerBase ):
 
    def __init__( self, inputs, hash_mode ):
       assert inputs
+
+      if not len( inputs ):
+         print "ERROR: specify one or more things to list"
+         sys.exit(1)
+
       ScannerBase.__init__( self )
 
       # save the inputs
@@ -1253,6 +1266,31 @@ def mk_entry( root, rel_path = None, name = None, hash_mode = None ):
    raise AssertionError
 
 
+# -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
+
+# TODO: in theory this can take the place of all the goo in the section below
+# but we need retrofit the DiffScanner class to take an args list and handle
+# validation
+
+class CmdObj( RootObj ):
+
+   def __init__( self, scanner_class, proc_func ):
+
+      RootObj.__init__( self )
+
+      self.scanner_class   = scanner_class
+      self.proc_func       = proc_func
+
+
+   def run( self, inputs, hash_mode = None ):
+
+      # construct the scanner object
+      scanner              = self.scanner_class( inputs, hash_mode )
+      # and invoke it
+      scanner.run( self.proc_func )
+
+      return scanner
+
 
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
 # -=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-=-
@@ -1261,33 +1299,6 @@ def mk_entry( root, rel_path = None, name = None, hash_mode = None ):
 
 # helper functions for running the ListScanner and DiffScanner; results can be
 # optionally processed by the given unbound method
-
-
-def _run_list( args = None, hash_mode = None, unbound_func = None ):
-
-   if not args:
-      args = sys.argv[1:]
-   if not len( args ):
-      print "ERROR: specify one or more things to dump..."
-      sys.exit(1)
-
-   ls = ListScanner( args, hash_mode )
-   ls.run( unbound_func )
-
-
-def _run_diff( args = None, hash_mode = None, unbound_func = None ):
-
-   if not args:
-      args = sys.argv[1:]
-   if len( args ) != 2:
-      print "ERROR: specify exactly 2 objects to compare"
-      sys.exit()
-
-   # get the args
-   src, dst = args
-   # and call the comparison function
-   ds = DiffScanner( src, dst, hash_mode )
-   ds.run( unbound_func )
 
 
 # top-level run commands, for processing command line modes
@@ -1314,34 +1325,12 @@ def run_test( args = None, hash_mode = None ):
    ds.dump()
 
 
-def run_list( args = None, hash_mode = None ):
-
-   _run_list( args, hash_mode, ListScanner.show_all )
-
-
-def run_dups( args = None, hash_mode = None ):
-
-   _run_list( args, hash_mode, ListScanner.show_dups )
-
-
-def run_diff( args = None, hash_mode = None ):
-
-   _run_diff( args, hash_mode, DiffScanner.show_all )
-
-
-def run_backup( args = None, hash_mode = None ):
-
-   _run_diff( args, hash_mode, DiffScanner.do_backup )
-
-
-
-
 COMMANDS = {
-   "LIST"   : run_list,
-   "DUPS"   : run_dups,
-   "DIFF"   : run_diff,
-   "BACK"   : run_backup,
-   "TEST"   : run_test,
+   "LIST"   : CmdObj( ListScanner, ListScanner.show_all  ),
+   "DUPS"   : CmdObj( ListScanner, ListScanner.show_dups ),
+   "DIFF"   : CmdObj( DiffScanner, DiffScanner.show_all  ),
+   "BACK"   : CmdObj( DiffScanner, DiffScanner.do_backup ),
+#  "TEST"   : run_test,
 }
 
 
@@ -1400,8 +1389,8 @@ if __name__ == "__main__":
       print "verbose=%s"   % args.verbose
       print "scopes=%s"    % args.scopes
 
-   fn = COMMANDS[ args.mode ]
-   fn( args.scopes, hash_mode )
+   cmd_obj = COMMANDS[ args.mode ]
+   scanner = cmd_obj.run( args.scopes, hash_mode )
 
 
 # vim: syntax=python si
